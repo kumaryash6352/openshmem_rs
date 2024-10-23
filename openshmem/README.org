@@ -1,0 +1,30 @@
+#+title: OpenSHMEM-rs
+
+* OpenSHMEM-rs
+
+Rust bindings for the OpenSHMEM 1.5 communication API.
+* TODO Example
+See [[./examples/]] for example programs.
+* Building
+
+This library depends on src_txt{openshmem-sys}. Building the sys crate
+requires the environment variable src_txt{SHMEM_INSTALL_DIR} to point to
+a directory containing your OpenSHMEM installation.
+
+We currently test Sandia OpenSHMEM as the underlying OpenSHMEM implementation.
+** Developing
+
+If you want rust-analyzer to function correctly, you'll need to pass src_txt{SHMEM_INSTALL_DIR}
+to rust-analyzer.
+*** TODO VSCode
+*** Emacs (lsp-mode)
+
+Add this to your configuration.
+
+#+BEGIN_SRC elisp :exports code
+
+#+END_SRC
+* Prior Work
+
+Rebecca Hassett and Tony Curtis at Stony Brook University created the RustySHMEM project, which
+this library draws heavy inspiration from.

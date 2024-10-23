@@ -1,0 +1,41 @@
+#+title: Notes
+
+* Prior Art
+** Leidel @ Tactical Computing Labs :: ?
+- steve will get in contact
+** Tony Curtis, Rebecca @ Stony Brook :: rustyshmem
+- rustyshmem project
+- [[https://raw.githubusercontent.com/wiki/openucx/ucx/UCF2021_slides/UCF2021_paper_17.pdf][presentation]] @ ucf 2021
+  - ucf video deleted
+- ookami [[https://www.stonybrook.edu/commcms/ookami/projects/_docs/Project_Curtis_rustyshmem.pdf][application]] 2022
+- no news since
+** lemonrock :: openshmem-reference-sys
+- implements 1.3 spec
+- [[https://github.com/lemonrock/rdma-core][github]]
+- abandoned
+- "unlinking sys crate" :: doesn't actually link to any openshmem impl
+* Core Concepts
+** remote arrays
+acquire a "lock" on a remote array
+- prevents remote pe from accessing
+** Shmallocator
+allocator with lifetime of ctx
+- functions for boxes, vecs, etc.
+- implements Allocator (and maybe GlobalAllocator?)
+- TODO: remote writes: better to be safe or ergonomic?
+  - locks needed:
+    + safer
+    + easier to reason about
+    - overhead
+    - verbose
+  - no lock needed:
+    + less verbose
+    + 1-1 with C
+    - harder to reason about data-race wise
+    - absolutely unsound just like absurdly unsound
+      this is in direct and blatant opposition to the
+      nomicon's aliasing rules
+for large shared arrays:
+- enable "view locks":
+  - pe's can lock a view in the array
+  - as many locks can exist as possible so long as they do not overlap
