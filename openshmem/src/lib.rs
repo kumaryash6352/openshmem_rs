@@ -30,10 +30,11 @@ use openshmem_sys::shmem::{
     shmem_addr_accessible, shmem_barrier_all, shmem_ctx_t, shmem_finalize, shmem_global_exit,
     shmem_impl_team_t, shmem_info_get_name, shmem_info_get_version, shmem_init, shmem_init_thread,
     shmem_my_pe, shmem_n_pes, shmem_pe_accessible, shmem_ptr, shmem_query_thread,
-    shmem_team_config_t, shmem_team_my_pe, SHMEM_MAX_NAME_LEN,
+    shmem_team_config_t, shmem_team_my_pe, SHMEM_MAX_NAME_LEN, SHMEM_TEAM_WORLD,
 };
 
 pub use openshmem_sys::shmem as ffi;
+mod macros;
 #[cfg(feature = "shmalloc")]
 use shmalloc::{PEReference, Shbox, Shmallocator};
 use thiserror::Error;
@@ -138,6 +139,14 @@ impl ShmemCtx {
         // }))
         unsafe { shmem_init() }
         Ok(Self {})
+    }
+
+    pub fn team(&self) -> Handle<Team> {
+        // TODO:
+        Handle {
+            ptr: unsafe { SHMEM_TEAM_WORLD as *mut c_void },
+            _inner: PhantomData::default()
+        }
     }
 
     /// Equivalent to `shmem_my_pe`; returns the unique
@@ -557,6 +566,14 @@ mod shmalloc {
         pub fn raw(&self) -> &T {
             self.internal.as_ref()
         }
+
+        pub fn raw_ptr(&self) -> *const T {
+            self.internal.as_ref() as _
+        }
+
+        pub fn raw_ptr_mut(&mut self) -> *mut T {
+            self.internal.as_mut() as _
+        }
     }
 
     impl<'ctx, T: ?Sized> Deref for Shbox<'ctx, T> {
@@ -652,7 +669,7 @@ mod shmalloc {
         /// Edit an object on a remote PE directly.
         ///
         /// Uses `shmem_ptr` to perform one-sided memory manipulation.
-        pub fn get<T: ?Sized>(self, what: &mut Shbox<T>, action: impl FnOnce(&mut T)) {
+        pub fn get_direct<T: ?Sized>(self, what: &mut Shbox<T>, action: impl FnOnce(&mut T)) {
             let ptr = what.internal.as_mut() as *mut T as *mut () as usize;
             if self.ctx.addr_accessible(ptr as *const c_void, PE(self.pe)) {
                 // SAFETY: Since the RMA feature is activated, this will not be null.
@@ -684,7 +701,7 @@ mod shmalloc {
         ///
         /// Note that the data in the slice is a copy of the LOCAL SHBOX's array at
         /// that point. TODO: I dunno what to do about that.
-        pub fn view_mut<'a, 'shbox, R, T>(
+        pub fn write<'a, 'shbox, R, T>(
             &self,
             shbox: &'shbox mut Shbox<'ctx, [T]>,
             range: R,
@@ -770,6 +787,10 @@ impl<'ctx, T> Handle<'ctx, T> {
     unsafe fn interpret_as<E: Sized>(&self) -> &E {
         &*(self.ptr as *const E)
     }
+
+    fn raw(&self) -> *mut c_void {
+        self.ptr
+    }
 }
 
 // /// Equivalent to it's OpenSHMEM definition:
@@ -802,27 +823,97 @@ impl<'ctx, T> Handle<'ctx, T> {
 // }
 
 /// Represents types that have a `shmem_[and, or, xor]_reduce`.
-pub trait BooleanReducable {
+pub trait BooleanReducible {
     /// Apply `shmem_[typename]_and_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn and_into(&self, shbox: &mut Shbox<'_, Self>);
+    unsafe fn and_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx) {
+        self.and_into_many(shbox, 1, ctx)
+    }
+    /// Apply `shmem_[typename]_and_reduce`.
+    ///
+    /// # Safety
+    /// TODO:
+    unsafe fn and_into_many(&self, shbox: &mut Shbox<'_, Self>, n: usize, ctx: &ShmemCtx);
     /// Apply `shmem_[typename]_or_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn or_into(&self, shbox: &mut Shbox<'_, Self>);
+    unsafe fn or_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
     /// Apply `shmem_[typename]_xor_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn xor_into(&self, shbox: &mut Shbox<'_, Self>);
+    unsafe fn xor_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
 }
 /// Represents types that have a `shmem_[sum, prod]_reduce`.
-pub trait ArithmeticReducable {}
+pub trait ArithmeticReducible {
+    /// Apply `shmem_[typename]_sum_reduce`.
+    ///
+    /// # Safety
+    /// TODO:
+    unsafe fn sum_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    /// Apply `shmem_[typename]_sum_reduce`.
+    ///
+    /// # Safety
+    /// TODO:
+    unsafe fn sum_into_many(&self, shbox: &mut Shbox<'_, Self>, n: usize, ctx: &ShmemCtx);
+
+    /// Apply `shmem_[typename]_prod_reduce`.
+    ///
+    /// # Safety
+    /// TODO:
+    unsafe fn prod_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+}
 /// Represents types that have a `shmem_[max, min]_reduce`.
-pub trait CompareReducable {}
+pub trait CompareReducible {
+    /// Apply `shmem_[typename]_max_reduce`.
+    ///
+    /// # Safety
+    /// TODO:
+    unsafe fn max_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+
+    /// Apply `shmem_[typename]_min_reduce`.
+    ///
+    /// # Safety
+    /// TODO:
+    unsafe fn min_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+}
+
+impl_arithmetic_reducible!(u8, uint8);
+impl_arithmetic_reducible!(i8, int8);
+impl_arithmetic_reducible!(u16, uint16);
+impl_arithmetic_reducible!(i16, int16);
+impl_arithmetic_reducible!(u32, uint32);
+impl_arithmetic_reducible!(i32, int32);
+impl_arithmetic_reducible!(u64, uint64);
+impl_arithmetic_reducible!(i64, int64);
+impl_arithmetic_reducible!(f32, float);
+impl_arithmetic_reducible!(f64, double);
+impl_arithmetic_reducible!(usize, size);
+
+impl_compare_reducible!(u8, uint8);
+impl_compare_reducible!(i8, int8);
+impl_compare_reducible!(u16, uint16);
+impl_compare_reducible!(i16, int16);
+impl_compare_reducible!(u32, uint32);
+impl_compare_reducible!(i32, int32);
+impl_compare_reducible!(u64, uint64);
+impl_compare_reducible!(i64, int64);
+impl_compare_reducible!(f32, float);
+impl_compare_reducible!(f64, double);
+impl_compare_reducible!(usize, size);
+
+impl_boolean_reducible!(u8, uint8);
+impl_boolean_reducible!(i8, int8);
+impl_boolean_reducible!(u16, uint16);
+impl_boolean_reducible!(i16, int16);
+impl_boolean_reducible!(u32, uint32);
+impl_boolean_reducible!(i32, int32);
+impl_boolean_reducible!(u64, uint64);
+impl_boolean_reducible!(i64, int64);
+impl_boolean_reducible!(usize, size);
 
 #[cfg(test)]
 mod tests {
@@ -832,6 +923,6 @@ mod tests {
     fn init() {
         let ctx = ShmemCtx::init().expect("shmem ctx to init");
 
-        ctx_p();
+        //ctx_p();
     }
 }
