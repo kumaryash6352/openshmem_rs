@@ -888,7 +888,7 @@ pub trait BooleanReducible: Sized {
     /// Apply `shmem_[typename]_and_reduce`.
     ///
     /// # Safety
-    /// TODO:
+    /// `n` must be less than or equal to the number of elements in shbox.
     unsafe fn and_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
     /// Apply `shmem_[typename]_or_reduce`.
     ///
@@ -898,7 +898,7 @@ pub trait BooleanReducible: Sized {
     /// Apply `shmem_[typename]_or_reduce`.
     ///
     /// # Safety
-    /// TODO:
+    /// `n` must be less than or equal to the number of elements in shbox.
     unsafe fn or_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
     /// Apply `shmem_[typename]_xor_reduce`.
     ///
@@ -908,7 +908,7 @@ pub trait BooleanReducible: Sized {
     /// Apply `shmem_[typename]_xor_reduce`.
     ///
     /// # Safety
-    /// TODO:
+    /// `n` must be less than or equal to the number of elements in shbox.
     unsafe fn xor_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
 }
 /// Represents types that have a `shmem_[sum, prod]_reduce`.
@@ -926,7 +926,7 @@ pub trait ArithmeticReducible: Sized {
     /// Apply `shmem_[typename]_sum_reduce`.
     ///
     /// # Safety
-    /// TODO:
+    /// `n` must be less than or equal to the number of elements in shbox.
     unsafe fn sum_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
 
     /// Apply `shmem_[typename]_prod_reduce`.
@@ -937,7 +937,7 @@ pub trait ArithmeticReducible: Sized {
     /// Apply `shmem_[typename]_prod_reduce`.
     ///
     /// # Safety
-    /// TODO:
+    /// `n` must be less than or equal to the number of elements in shbox.
     unsafe fn prod_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
 }
 /// Represents types that have a `shmem_[max, min]_reduce`.
