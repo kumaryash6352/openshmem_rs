@@ -141,6 +141,7 @@ impl ShmemCtx {
         Ok(Self {})
     }
 
+    /// Returns the team this context refers to.
     pub fn team(&self) -> Handle<Team> {
         // TODO:
         Handle {
@@ -414,13 +415,7 @@ impl Drop for ShmemCtx {
 #[cfg(feature = "shmalloc")]
 mod shmalloc {
     use std::{
-        alloc::{AllocError, Allocator, Layout},
-        ffi::c_void,
-        fmt::Debug,
-        mem::{self, forget, MaybeUninit},
-        ops::{Deref, DerefMut, Index, Range, RangeBounds},
-        ptr::NonNull,
-        slice::SliceIndex,
+        alloc::{AllocError, Allocator, Layout}, ffi::c_void, fmt::Debug, mem::{self, forget, MaybeUninit}, ops::{Deref, DerefMut, Index, Range, RangeBounds}, os::unix::process::CommandExt, ptr::NonNull, slice::SliceIndex
     };
 
     use bytemuck::Pod;
@@ -428,7 +423,7 @@ mod shmalloc {
         shmem_align, shmem_calloc, shmem_free, shmem_getmem, shmem_ptr, shmem_putmem, shmem_realloc,
     };
 
-    use crate::{ShmemCtx, PE};
+    use crate::{ArithmeticReducible, BooleanReducible, CompareReducible, ShmemCtx, PE};
 
     pub struct Shmallocator<'ctx> {
         // We hold on to the ctx so we can verify
@@ -576,6 +571,62 @@ mod shmalloc {
         }
     }
 
+    impl<'ctx, T: ArithmeticReducible> Shbox<'ctx, T> {
+        pub fn reduce_sum(&mut self, ctx: &ShmemCtx) {
+            unsafe { T::sum_into(self, ctx) }
+        }
+        pub fn reduce_prod(&mut self, ctx: &ShmemCtx) {
+            unsafe { T::prod_into(self, ctx) }
+        }
+    }
+    impl<'ctx, T: BooleanReducible> Shbox<'ctx, T> {
+        pub fn reduce_and(&mut self, ctx: &ShmemCtx) {
+            unsafe { T::and_into(self, ctx) }
+        }
+        pub fn reduce_or(&mut self, ctx: &ShmemCtx) {
+            unsafe { T::or_into(self, ctx) }
+        }
+        pub fn reduce_xor(&mut self, ctx: &ShmemCtx) {
+            unsafe { T::xor_into(self, ctx) }
+        }
+    }
+    impl<'ctx, T: CompareReducible> Shbox<'ctx, T> {
+        pub fn reduce_max(&mut self, ctx: &ShmemCtx) {
+            unsafe { T::max_into(self, ctx) }
+        }
+        pub fn reduce_min(&mut self, ctx: &ShmemCtx) {
+            unsafe { T::min_into(self, ctx) }
+        }
+    }
+
+    impl<'ctx, T: ArithmeticReducible> Shbox<'ctx, [T]> {
+        pub fn reduce_sum(&mut self, elements: usize, ctx: &ShmemCtx) {
+            unsafe { T::sum_into_many(self, elements, ctx) }
+        }
+        pub fn reduce_prod(&mut self, elements: usize, ctx: &ShmemCtx) {
+            unsafe { T::prod_into_many(self, elements, ctx) }
+        }
+    }
+    impl<'ctx, T: BooleanReducible> Shbox<'ctx, [T]> {
+        pub fn reduce_and(&mut self, elements: usize, ctx: &ShmemCtx) {
+            unsafe { T::and_into_many(self, elements, ctx) }
+        }
+        pub fn reduce_or(&mut self, elements: usize, ctx: &ShmemCtx) {
+            unsafe { T::or_into_many(self, elements, ctx) }
+        }
+        pub fn reduce_xor(&mut self, elements: usize, ctx: &ShmemCtx) {
+            unsafe { T::xor_into_many(self, elements, ctx) }
+        }
+    }
+    impl<'ctx, T: CompareReducible> Shbox<'ctx, [T]> {
+        pub fn reduce_max(&mut self, elements: usize, ctx: &ShmemCtx) {
+            unsafe { T::max_into_many(self, elements, ctx) }
+        }
+        pub fn reduce_min(&mut self, elements: usize, ctx: &ShmemCtx) {
+            unsafe { T::min_into_many(self, elements, ctx) }
+        }
+    }
+
     impl<'ctx, T: ?Sized> Deref for Shbox<'ctx, T> {
         type Target = T;
 
@@ -651,7 +702,7 @@ mod shmalloc {
         R: RangeBounds<usize> + Clone,
         'ctx: 'shbox,
     {
-        pub fn finalize(self) {
+        pub fn finish(self) {
             drop(self)
         }
     }
@@ -823,62 +874,100 @@ impl<'ctx, T> Handle<'ctx, T> {
 // }
 
 /// Represents types that have a `shmem_[and, or, xor]_reduce`.
-pub trait BooleanReducible {
+#[diagnostic::on_unimplemented(
+    message = "no OpenSHMEM routine for boolean reductions into {Self}",
+    label = "this {Self} here"
+    note = "OpenSHMEM provides boolean reduction routines for [i/u][8, 16, 32, 64, size]"
+)]
+pub trait BooleanReducible: Sized {
     /// Apply `shmem_[typename]_and_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn and_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx) {
-        self.and_into_many(shbox, 1, ctx)
-    }
+    unsafe fn and_into(shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
     /// Apply `shmem_[typename]_and_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn and_into_many(&self, shbox: &mut Shbox<'_, Self>, n: usize, ctx: &ShmemCtx);
+    unsafe fn and_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
     /// Apply `shmem_[typename]_or_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn or_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    unsafe fn or_into(shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    /// Apply `shmem_[typename]_or_reduce`.
+    ///
+    /// # Safety
+    /// TODO:
+    unsafe fn or_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
     /// Apply `shmem_[typename]_xor_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn xor_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    unsafe fn xor_into(shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    /// Apply `shmem_[typename]_xor_reduce`.
+    ///
+    /// # Safety
+    /// TODO:
+    unsafe fn xor_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
 }
 /// Represents types that have a `shmem_[sum, prod]_reduce`.
-pub trait ArithmeticReducible {
+#[diagnostic::on_unimplemented(
+    message = "no OpenSHMEM routine for arithmetic reductions into {Self}",
+    label = "this {Self} here",
+    note = "OpenSHMEM provides arithmetic reduction routines for [i/u][8, 16, 32, 64, size], f[32, 64]"
+)]
+pub trait ArithmeticReducible: Sized {
     /// Apply `shmem_[typename]_sum_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn sum_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    unsafe fn sum_into(shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
     /// Apply `shmem_[typename]_sum_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn sum_into_many(&self, shbox: &mut Shbox<'_, Self>, n: usize, ctx: &ShmemCtx);
+    unsafe fn sum_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
 
     /// Apply `shmem_[typename]_prod_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn prod_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    unsafe fn prod_into(shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    /// Apply `shmem_[typename]_prod_reduce`.
+    ///
+    /// # Safety
+    /// TODO:
+    unsafe fn prod_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
 }
 /// Represents types that have a `shmem_[max, min]_reduce`.
-pub trait CompareReducible {
+#[diagnostic::on_unimplemented(
+    message = "no OpenSHMEM routine for max/min reductions into {Self}",
+    label = "this {Self} here"
+    note = "OpenSHMEM provides max/min reduction routines for [i/u][8, 16, 32, 64, size], f[32, 64]"
+)]
+pub trait CompareReducible: Sized {
     /// Apply `shmem_[typename]_max_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn max_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    unsafe fn max_into(shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    /// Apply `shmem_[typename]_max_reduce`.
+    ///
+    /// # Safety
+    /// TODO:
+    unsafe fn max_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
 
     /// Apply `shmem_[typename]_min_reduce`.
     ///
     /// # Safety
     /// TODO:
-    unsafe fn min_into(&self, shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    unsafe fn min_into(shbox: &mut Shbox<'_, Self>, ctx: &ShmemCtx);
+    /// Apply `shmem_[typename]_min_reduce`.
+    ///
+    /// # Safety
+    /// TODO:
+    unsafe fn min_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
 }
 
 impl_arithmetic_reducible!(u8, uint8);

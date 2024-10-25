@@ -8,7 +8,7 @@ use std::{
 use openshmem::ShmemCtx;
 
 // felt right
-const RESOLUTION: (usize, usize) = (4096, 3714);
+const RESOLUTION: (usize, usize) = (8192, 7428);
 
 fn main() -> Result<(), Box<dyn Error>> {
     let ctx = ShmemCtx::init()?;
