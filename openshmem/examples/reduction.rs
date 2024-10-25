@@ -16,11 +16,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     drop(urand); // no need to keep it around
 
     let mut numbers = shmallocator.array_gen(|i| randoms[i] as f32 / u8::MAX as f32, 4);
-    println!("[PE {my_pe}]: grabbed {:.2?} from urandom", &numbers[..]);
+    let mut max = shmallocator.shbox(*numbers.iter().max_by(|a, b| a.total_cmp(b)).unwrap());
+    println!("[PE {my_pe}]: grabbed {:.2?} from urandom (max = {:.2})", &numbers[..], *max);
 
     ctx.barrier_all();
     numbers.reduce_min(numbers.len(), &ctx);
-    println!("[PE {my_pe}]: after min reduction seeing {:.2?}", &numbers[..]);
+    max.reduce_max(&ctx);
+    println!("[PE {my_pe}]: after min reduction seeing {:.2?} (max = {:.2})", &numbers[..], *max);
 
 
     Ok(())
