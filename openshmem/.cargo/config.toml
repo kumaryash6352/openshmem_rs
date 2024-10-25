@@ -1,2 +1,2 @@
-[target."*"]
-runner = "oshrun"
+[target.aarch64-apple-darwin]
+runner = "mpiexec.hydra -n 4"
