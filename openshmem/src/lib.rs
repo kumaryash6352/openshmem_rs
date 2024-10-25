@@ -77,8 +77,8 @@ impl PE {
     /// Return the raw PE idx.
     ///
     /// This is always safe to call.
-    pub fn raw(&self) -> u32 {
-        self.0
+    pub fn raw(&self) -> usize {
+        self.0 as _
     }
 }
 
@@ -876,7 +876,7 @@ impl<'ctx, T> Handle<'ctx, T> {
 /// Represents types that have a `shmem_[and, or, xor]_reduce`.
 #[diagnostic::on_unimplemented(
     message = "no OpenSHMEM routine for boolean reductions into {Self}",
-    label = "this {Self} here"
+    label = "this {Self} here",
     note = "OpenSHMEM provides boolean reduction routines for [i/u][8, 16, 32, 64, size]"
 )]
 pub trait BooleanReducible: Sized {
@@ -943,7 +943,7 @@ pub trait ArithmeticReducible: Sized {
 /// Represents types that have a `shmem_[max, min]_reduce`.
 #[diagnostic::on_unimplemented(
     message = "no OpenSHMEM routine for max/min reductions into {Self}",
-    label = "this {Self} here"
+    label = "this {Self} here",
     note = "OpenSHMEM provides max/min reduction routines for [i/u][8, 16, 32, 64, size], f[32, 64]"
 )]
 pub trait CompareReducible: Sized {
