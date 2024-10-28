@@ -2,8 +2,6 @@ use std::{error::Error, fs::File, io::Read};
 
 use openshmem::ShmemCtx;
 
-
-
 fn main() -> Result<(), Box<dyn Error>> {
     let ctx = ShmemCtx::init()?;
     let my_pe = ctx.my_pe();
@@ -23,7 +21,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     numbers.reduce_min(numbers.len(), &ctx);
     max.reduce_max(&ctx);
     println!("[PE {my_pe}]: after min reduction seeing {:.2?} (max = {:.2})", &numbers[..], *max);
-
 
     Ok(())
 }

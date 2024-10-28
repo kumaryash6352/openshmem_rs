@@ -1,3 +1,6 @@
+# The following Dockerfile may be considered documentation
+# for the build requirements of this library.
+
 #FROM --platform=linux/amd64 archlinux:base-devel
 FROM ljmf00/archlinux
 

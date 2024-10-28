@@ -3,8 +3,16 @@
 * OpenSHMEM-rs
 
 Rust bindings for the OpenSHMEM 1.5 communication API.
+
+Quick start:
+#+begin_src rust
+let ctx = ShmemCtx::init()?;
+let my_pe = ctx.my_pe().raw();
+let npes = ctx.n_pes();
+println!("Hello from PE {my_pe}!");
+#+end_src
 * TODO Example
-See [[./examples/]] for example programs.
+See [[./openshmem/examples/]] for example programs.
 * Building
 
 This library depends on src_txt{openshmem-sys}. Building the sys crate

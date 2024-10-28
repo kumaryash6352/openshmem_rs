@@ -126,3 +126,48 @@ macro_rules! impl_compare_reducible {
         }
     };
 }
+
+/// Implement Waitable for a type that has
+/// wait_until routines in the SHMEM spec.
+/// Usage: `impl_waitable(rust_type_name, shmem_type_name)`
+/// Example: `impl_waitable(u8, uchar)`
+#[macro_export]
+macro_rules! impl_waitable {
+    ($type:ty, $typename:ident) => {
+        ::paste::paste! {
+            impl Waitable for $type {
+                unsafe fn wait_until(shbox: &mut Shbox<'_, Self>, op: ShmemCompareOp, x: $type) {
+                    ::openshmem_sys::shmem::[<shmem_ $typename _wait_until>](shbox.raw_ptr_mut(),
+                                                                             op as _,
+                                                                             x);
+                }
+                unsafe fn wait_until_all(shbox: &mut Shbox<'_, [Self]>, op: ShmemCompareOp, x: $type) {
+                    ::openshmem_sys::shmem::[<shmem_ $typename _wait_until_all>](shbox.raw_ptr_mut() as _,
+                                                                                 shbox.len(),
+                                                                                 ::std::ptr::null(),
+                                                                                 op as _,
+                                                                                 x);
+
+                }
+                unsafe fn wait_until_some(shbox: &mut Shbox<'_, [Self]>, op: ShmemCompareOp, x: $type) -> Vec<usize> {
+                    let mut idxs = vec![0; shbox.len()];
+                    let n = ::openshmem_sys::shmem::[<shmem_ $typename _wait_until_some>](shbox.raw_ptr_mut() as _,
+                                                                                          shbox.len(),
+                                                                                          idxs.as_mut_ptr(),
+                                                                                          ::std::ptr::null(),
+                                                                                          op as _,
+                                                                                          x);
+                    idxs.truncate(n);
+                    idxs
+                }
+                unsafe fn wait_until_any(shbox: &mut Shbox<'_, [Self]>, op: ShmemCompareOp, x: $type) -> usize {
+                    ::openshmem_sys::shmem::[<shmem_ $typename _wait_until_any>](shbox.raw_ptr_mut() as _,
+                                                                                 shbox.len(),
+                                                                                 ::std::ptr::null(),
+                                                                                 op as _,
+                                                                                 x) as usize
+                }
+            }
+        }
+    };
+}

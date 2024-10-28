@@ -27,10 +27,7 @@ use std::{
 
 use bytemuck::Pod;
 use openshmem_sys::shmem::{
-    shmem_addr_accessible, shmem_barrier_all, shmem_ctx_t, shmem_finalize, shmem_global_exit,
-    shmem_impl_team_t, shmem_info_get_name, shmem_info_get_version, shmem_init, shmem_init_thread,
-    shmem_my_pe, shmem_n_pes, shmem_pe_accessible, shmem_ptr, shmem_query_thread,
-    shmem_team_config_t, shmem_team_my_pe, SHMEM_MAX_NAME_LEN, SHMEM_TEAM_WORLD,
+    shmem_addr_accessible, shmem_barrier_all, shmem_ctx_t, shmem_finalize, shmem_global_exit, shmem_impl_team_t, shmem_info_get_name, shmem_info_get_version, shmem_init, shmem_init_thread, shmem_my_pe, shmem_n_pes, shmem_pe_accessible, shmem_ptr, shmem_query_thread, shmem_team_config_t, shmem_team_my_pe, SHMEM_CMP_EQ, SHMEM_CMP_GE, SHMEM_CMP_GT, SHMEM_CMP_LE, SHMEM_CMP_LT, SHMEM_CMP_NE, SHMEM_MAX_NAME_LEN, SHMEM_TEAM_WORLD
 };
 
 pub use openshmem_sys::shmem as ffi;
@@ -146,7 +143,7 @@ impl ShmemCtx {
         // TODO:
         Handle {
             ptr: unsafe { SHMEM_TEAM_WORLD as *mut c_void },
-            _inner: PhantomData::default()
+            _inner: PhantomData::default(),
         }
     }
 
@@ -415,7 +412,14 @@ impl Drop for ShmemCtx {
 #[cfg(feature = "shmalloc")]
 mod shmalloc {
     use std::{
-        alloc::{AllocError, Allocator, Layout}, ffi::c_void, fmt::Debug, mem::{self, forget, MaybeUninit}, ops::{Deref, DerefMut, Index, Range, RangeBounds}, os::unix::process::CommandExt, ptr::NonNull, slice::SliceIndex
+        alloc::{AllocError, Allocator, Layout},
+        ffi::c_void,
+        fmt::Debug,
+        mem::{self, forget, MaybeUninit},
+        ops::{Deref, DerefMut, Index, Range, RangeBounds},
+        os::unix::process::CommandExt,
+        ptr::NonNull,
+        slice::SliceIndex,
     };
 
     use bytemuck::Pod;
@@ -1003,6 +1007,42 @@ impl_boolean_reducible!(i32, int32);
 impl_boolean_reducible!(u64, uint64);
 impl_boolean_reducible!(i64, int64);
 impl_boolean_reducible!(usize, size);
+
+/// Comparison operators for the wait_until family of methods.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ShmemCompareOp {
+    /// x == y (SHMEM_CMP_EQ)
+    Equal = SHMEM_CMP_EQ,
+    /// x != y (SHMEM_CMP_NE)
+    NotEqual = SHMEM_CMP_NE,
+    /// x > y (SHMEM_CMP_GT)
+    Greater = SHMEM_CMP_GT,
+    /// x >= y (SHMEM_CMP_GE)
+    GreaterEqual = SHMEM_CMP_GE,
+    /// x < y (SHMEM_CMP_LT)
+    Lesser = SHMEM_CMP_LT,
+    /// x <= y (SHMEM_CMP_LE)
+    LesserEqual = SHMEM_CMP_LE
+}
+
+/// Types that have shmem_wait_until routines.
+pub trait Waitable: Sized {
+    /// the shmem_{Self}_wait_until
+    unsafe fn wait_until(shbox: &mut Shbox<'_, Self>, op: ShmemCompareOp, x: Self);
+    /// the shmem_{Self}_wait_until_all
+    unsafe fn wait_until_all(shbox: &mut Shbox<'_, [Self]>, op: ShmemCompareOp, x: Self);
+    /// the shmem_{Self}_wait_until_some
+    unsafe fn wait_until_some(shbox: &mut Shbox<'_, [Self]>, op: ShmemCompareOp, x: Self) -> Vec<usize>;
+    /// the shmem_{Self}_wait_until_any
+    unsafe fn wait_until_any(shbox: &mut Shbox<'_, [Self]>, op: ShmemCompareOp, x: Self) -> usize;
+}
+
+impl_waitable!(u32, uint32);
+impl_waitable!(i32, int32);
+impl_waitable!(u64, uint64);
+impl_waitable!(i64, int64);
+impl_waitable!(usize, size);
 
 #[cfg(test)]
 mod tests {
