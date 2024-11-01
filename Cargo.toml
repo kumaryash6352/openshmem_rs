@@ -1,7 +1,11 @@
 [package]
-name = "openshmem"
-version = "0.1.0"
+name = "openshmem-rs"
+version = "1.5.0"
 edition = "2021"
+description = "Wrappers for the OpenSHMEM API."
+authors = ["Yash Kumar <ykumar@ttu.edu>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kumaryash6352/openshmem-rs"
 
 [features]
 default = ["shmalloc"]
