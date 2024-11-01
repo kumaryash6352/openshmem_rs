@@ -26,14 +26,13 @@ jobs:
       run: |
         docker run --rm -v $(pwd)/docs:/out --entrypoint /bin/sh docker-image -c "cargo doc --no-deps && cp -r /scratch/openshmem-rs/target/doc/openshmem_rs /out "
     - name: Upload Documentation
-      uses: actions/upload-artifact@v4
+      id: deployment
+      uses: actions/upload-pages-artifact@v3
       with:
-        name: github-pages
         path: docs/openshmem_rs
-        overwrite: true
   deploy:
     environment:
-      name: cargo-doc
+      name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     permissions:
       id-token: write
