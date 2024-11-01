@@ -1,0 +1,33 @@
+name: build docs
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-doc:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Build Docker Image
+      run: |
+        docker build -t docker-image .
+
+    - name: Run Cargo Doc
+      run: |
+        docker run --rm -v $(pwd)/target/doc:/scratch/openshmem-rs/target/doc/openshmem_rs --entrypoint /bin/sh docker-image -c "cargo doc"
+
+    - name: Upload Documentation
+      uses: actions/upload-artifact@v3
+      with:
+        name: cargo-doc
+        path: target/doc
