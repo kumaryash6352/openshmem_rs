@@ -23,14 +23,14 @@ We currently test Sandia OpenSHMEM as the underlying OpenSHMEM implementation.
 ** Developing
 
 If you want rust-analyzer to function correctly, you'll need to pass src_txt{SHMEM_INSTALL_DIR}
-to rust-analyzer.
+to rust-analyzer. Your src_txt{SHMEM_INSTALL_DIR} should contain a src_txt{lib/} and a src_txt{include/}.
 *** TODO VSCode
 *** Emacs (lsp-mode)
 
 Add this to your configuration.
 
 #+BEGIN_SRC elisp :exports code
-
+(setq lsp-rust-analyzer-cargo-extra-env ["SHMEM_INSTALL_DIR", "~/my-shmem-install-dir"])
 #+END_SRC
 * Prior Work
 

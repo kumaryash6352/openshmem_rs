@@ -7,6 +7,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Hello from PE {my_pe}!");
 
+    if my_pe == 0 {
+        let (minor, major) = ctx.info_get_version();
+        println!("OpenSHMEM implementation: {}", ctx.info_get_name_str());
+        println!("          version:        {minor}.{major}");
+    }
+
     ctx.barrier_all();
     let shmallocator = ctx.shmallocator();
     // implicit barrier (shmalign)

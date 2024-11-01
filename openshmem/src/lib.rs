@@ -14,20 +14,19 @@
     feature(allocator_api, set_ptr_value, ptr_as_ref_unchecked)
 )]
 
+use core::ffi::c_str;
 use std::{
-    error::Error,
-    ffi::{c_char, c_void, CString},
-    fmt::{Display, Write},
+    ffi::{c_char, c_void, CStr, CString},
+    fmt::Display,
     marker::PhantomData,
-    mem::transmute,
-    os::raw::c_int,
-    sync::OnceLock,
-    thread::panicking,
 };
 
-use bytemuck::Pod;
 use openshmem_sys::shmem::{
-    shmem_addr_accessible, shmem_barrier_all, shmem_ctx_t, shmem_finalize, shmem_global_exit, shmem_impl_team_t, shmem_info_get_name, shmem_info_get_version, shmem_init, shmem_init_thread, shmem_my_pe, shmem_n_pes, shmem_pe_accessible, shmem_ptr, shmem_query_thread, shmem_team_config_t, shmem_team_my_pe, SHMEM_CMP_EQ, SHMEM_CMP_GE, SHMEM_CMP_GT, SHMEM_CMP_LE, SHMEM_CMP_LT, SHMEM_CMP_NE, SHMEM_MAX_NAME_LEN, SHMEM_TEAM_WORLD
+    shmem_addr_accessible, shmem_barrier_all, shmem_ctx_t, shmem_finalize, shmem_global_exit,
+    shmem_impl_team_t, shmem_info_get_name, shmem_info_get_version, shmem_init, shmem_my_pe,
+    shmem_n_pes, shmem_pe_accessible, shmem_ptr, shmem_team_config_t, shmem_team_my_pe,
+    SHMEM_CMP_EQ, SHMEM_CMP_GE, SHMEM_CMP_GT, SHMEM_CMP_LE, SHMEM_CMP_LT, SHMEM_CMP_NE,
+    SHMEM_MAX_NAME_LEN, SHMEM_TEAM_WORLD,
 };
 
 pub use openshmem_sys::shmem as ffi;
@@ -248,12 +247,13 @@ impl ShmemCtx {
     /// See `info_get_name_str` for a lossy version that
     /// returns a String instead of a CString.
     pub fn info_get_name(&self) -> CString {
-        let mut raw = Vec::with_capacity(SHMEM_MAX_NAME_LEN as _);
+        let mut raw = vec![0; SHMEM_MAX_NAME_LEN as usize + 1];
         // SAFETY: We know raw is a valid vector of at least SHMEM_MAX_NAME_LEN size
         //         because we reserved that much space.
         unsafe { shmem_info_get_name(raw.as_mut_ptr() as *mut c_char) };
-        CString::from_vec_with_nul(raw)
+        CStr::from_bytes_until_nul(&raw)
             .expect("shmem_info_get_name should provide NUL-terminated string!")
+            .to_owned()
     }
 
     /// Almost equivalent to `shmem_info_get_name`.
@@ -264,8 +264,7 @@ impl ShmemCtx {
     /// Drops whatever can't be parsed to UTF-8.
     ///
     pub fn info_get_name_str(&self) -> String {
-        let cstr = self.info_get_name();
-        cstr.to_string_lossy().to_string()
+        self.info_get_name().to_string_lossy().to_string()
     }
 
     /// Almost equivalent to `shmem_init_thread`.
@@ -415,16 +414,14 @@ mod shmalloc {
         alloc::{AllocError, Allocator, Layout},
         ffi::c_void,
         fmt::Debug,
-        mem::{self, forget, MaybeUninit},
-        ops::{Deref, DerefMut, Index, Range, RangeBounds},
-        os::unix::process::CommandExt,
+        mem::{self, MaybeUninit},
+        ops::{Deref, DerefMut, RangeBounds},
         ptr::NonNull,
-        slice::SliceIndex,
     };
 
     use bytemuck::Pod;
     use openshmem_sys::shmem::{
-        shmem_align, shmem_calloc, shmem_free, shmem_getmem, shmem_ptr, shmem_putmem, shmem_realloc,
+        shmem_align, shmem_calloc, shmem_free, shmem_getmem, shmem_putmem, shmem_realloc,
     };
 
     use crate::{ArithmeticReducible, BooleanReducible, CompareReducible, ShmemCtx, PE};
@@ -839,11 +836,11 @@ pub struct Handle<'ctx, T> {
 }
 
 impl<'ctx, T> Handle<'ctx, T> {
-    unsafe fn interpret_as<E: Sized>(&self) -> &E {
+    pub unsafe fn interpret_as<E: Sized>(&self) -> &E {
         &*(self.ptr as *const E)
     }
 
-    fn raw(&self) -> *mut c_void {
+    pub fn raw(&self) -> *mut c_void {
         self.ptr
     }
 }
@@ -1023,18 +1020,28 @@ pub enum ShmemCompareOp {
     /// x < y (SHMEM_CMP_LT)
     Lesser = SHMEM_CMP_LT,
     /// x <= y (SHMEM_CMP_LE)
-    LesserEqual = SHMEM_CMP_LE
+    LesserEqual = SHMEM_CMP_LE,
 }
 
 /// Types that have shmem_wait_until routines.
+#[diagnostic::on_unimplemented(
+    message = "no OpenSHMEM routine for waits into {Self}",
+    label = "this {Self} here",
+    note = "OpenSHMEM provides wait routines for [i/u][32, 64, size]"
+)]
 pub trait Waitable: Sized {
-    /// the shmem_{Self}_wait_until
+    /// Blocks, waiting until the value matches the given value and op.
     unsafe fn wait_until(shbox: &mut Shbox<'_, Self>, op: ShmemCompareOp, x: Self);
-    /// the shmem_{Self}_wait_until_all
+    /// Blocks, waiting until all values match the given value and op.
     unsafe fn wait_until_all(shbox: &mut Shbox<'_, [Self]>, op: ShmemCompareOp, x: Self);
-    /// the shmem_{Self}_wait_until_some
-    unsafe fn wait_until_some(shbox: &mut Shbox<'_, [Self]>, op: ShmemCompareOp, x: Self) -> Vec<usize>;
-    /// the shmem_{Self}_wait_until_any
+    /// Blocks, waiting until some values match the given value and op.
+    unsafe fn wait_until_some(
+        shbox: &mut Shbox<'_, [Self]>,
+        op: ShmemCompareOp,
+        x: Self,
+    ) -> Vec<usize>;
+    /// Blocks, waiting until some values match the given value and op.
+    /// Returns a vector of indices of the values that matched.
     unsafe fn wait_until_any(shbox: &mut Shbox<'_, [Self]>, op: ShmemCompareOp, x: Self) -> usize;
 }
 
@@ -1048,10 +1055,11 @@ impl_waitable!(usize, size);
 mod tests {
     use super::*;
 
-    #[test]
-    fn init() {
-        let ctx = ShmemCtx::init().expect("shmem ctx to init");
+    // TODO: figure out how to run tests (since they need the whole oshrun business)
+    // #[test]
+    // fn init() {
+    //     let ctx = ShmemCtx::init().expect("shmem ctx to init");
 
-        //ctx_p();
-    }
+    //     //ctx_p();
+    // }
 }

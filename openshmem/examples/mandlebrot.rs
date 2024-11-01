@@ -15,9 +15,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let my_pe = ctx.my_pe();
     let is_root = my_pe == 0;
     let npes = ctx.n_pes();
+    let max_row_count = RESOLUTION.1 / npes + RESOLUTION.1 % npes;
     let my_row_count = if my_pe == npes - 1 {
-        // do remainder too
-        RESOLUTION.1 / npes + RESOLUTION.1 % npes
+        max_row_count
     } else {
         RESOLUTION.1 / npes
     };
@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let my_row_range = (my_row_start)..(my_row_start + my_row_count);
 
     let shmallocator = ctx.shmallocator();
-    let mut rows = shmallocator.array_default((RESOLUTION.1 / npes + RESOLUTION.1 % npes) * RESOLUTION.0);
+    let mut rows = shmallocator.array_default(max_row_count * RESOLUTION.0);
 
     println!(
         "[PE {my_pe}]: ready to start calculating (row range: {}..{})",
@@ -34,7 +34,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     ctx.barrier_all();
     let calc_start = Instant::now();
 
-    // see with_rayon.rs for examples of parallelizing these loops
     for row in my_row_range.clone() {
         for col in 0..RESOLUTION.0 {
             rows[(row - my_row_range.start) * RESOLUTION.0 + col] = pixel(col, row);
@@ -74,9 +73,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             } * RESOLUTION.0;
 
             let their_data = ctx.pe(pe).read(&rows, ..);
-
-            //dbg!(their_data.deref());
-
             println!(
                 "[PE {my_pe}]: got {} elements from pe {pe}, writing...",
                 their_data.len()
