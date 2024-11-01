@@ -2,7 +2,7 @@
 
 * OpenSHMEM-rs
 
-Rust bindings for the OpenSHMEM 1.5 communication API.
+Rust bindings for the OpenSHMEM 1.5 (and soon 1.6) communication API.
 
 Quick start:
 #+begin_src rust
@@ -11,19 +11,38 @@ let my_pe = ctx.my_pe().raw();
 let npes = ctx.n_pes();
 println!("Hello from PE {my_pe}!");
 #+end_src
-* TODO Example
+* Examples
 See [[./openshmem/examples/]] for example programs.
 * Building
 
 This library depends on src_txt{openshmem-sys}. Building the sys crate
 requires the environment variable src_txt{SHMEM_INSTALL_DIR} to point to
-a directory containing your OpenSHMEM installation.
+a directory containing your OpenSHMEM installation. Your src_txt{SHMEM_INSTALL_DIR} should contain a src_txt{lib/} and a src_txt{include/}.
+For example, this is the output of src_txt{tree} on the src_txt{SHMEM_INSTALL_DIR} for Sandia OpenSHMEM.
 
-We currently test Sandia OpenSHMEM as the underlying OpenSHMEM implementation.
+#+begin_src bash :exports code
+├── ...
+├── include/
+│   ├── mpp/
+│   ├── shmem-def.h
+│   ├── shmem.fh
+│   ├── shmem.h
+│   ├── shmemx-def.h
+│   ├── shmemx.fh
+│   └── shmemx.h
+├── lib/
+│   ├── libsma.0.dylib
+│   ├── libsma.a
+│   └── ...
+└── ...
+#+end_src
+
+
+We currently test with Sandia OpenSHMEM as the underlying OpenSHMEM implementation.
 ** Developing
 
 If you want rust-analyzer to function correctly, you'll need to pass src_txt{SHMEM_INSTALL_DIR}
-to rust-analyzer. Your src_txt{SHMEM_INSTALL_DIR} should contain a src_txt{lib/} and a src_txt{include/}.
+to rust-analyzer.
 *** TODO VSCode
 *** Emacs (lsp-mode)
 
