@@ -30,7 +30,6 @@ jobs:
       with:
         name: cargo-doc
         path: docs/openshmem_rs
-    - name: Upload to GitHub pages
   deploy:
     environment:
       name: cargo-doc
