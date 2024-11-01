@@ -14,7 +14,6 @@
     feature(allocator_api, set_ptr_value, ptr_as_ref_unchecked)
 )]
 
-use core::ffi::c_str;
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     fmt::Display,
