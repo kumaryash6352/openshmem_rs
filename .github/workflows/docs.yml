@@ -24,7 +24,7 @@ jobs:
 
     - name: Run Cargo Doc
       run: |
-        docker run --rm -v $(pwd)/temp_doc:/temp_doc --entrypoint /bin/sh my-docker-image -c "mkdir -p /temp_doc && cargo doc --no-deps --target-dir /temp_doc"
+        docker run --rm -v $(pwd)/temp_doc:/temp_doc --entrypoint /bin/sh docker-image -c "mkdir -p /temp_doc && cargo doc --no-deps --target-dir /temp_doc"
         cp -r temp_doc/$(ls temp_doc)/doc target/doc
     - name: Upload Documentation
       uses: actions/upload-artifact@v3
