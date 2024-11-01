@@ -14,9 +14,8 @@ cubecl = { git = "https://github.com/tracel-ai/cubecl.git", version = "0.2.0", f
 [dependencies]
 bytemuck = "1.19.0"
 lazy_static = "1.5.0"
-openshmem-sys = { path = "../openshmem-sys" }
+openshmem-sys = { path = "./openshmem-sys" }
 paste = "1.0.15"
-#openshmem-macros = { path = "../openshmem-macros" }
 thiserror = "1.0.64"
 
 [[example]]
