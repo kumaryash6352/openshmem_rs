@@ -28,7 +28,7 @@ jobs:
     - name: Upload Documentation
       uses: actions/upload-artifact@v3
       with:
-        name: cargo-doc
+        name: github-pages
         path: docs/openshmem_rs
   deploy:
     environment:
