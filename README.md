@@ -49,7 +49,14 @@ implementation.
 If you want rust-analyzer to function correctly, you'll need to pass
 `SHMEM_INSTALL_DIR` to rust-analyzer.
 
-### [TODO] VSCode
+### VSCode
+
+Add this to your user settings JSON.
+```json
+  ...
+  "rust-analyzer.server.extraEnv": { "SHMEM_INSTALL_DIR": "~/my-shmem-install-dir" },
+  ...
+```
 
 ### Emacs (lsp-mode)
 
