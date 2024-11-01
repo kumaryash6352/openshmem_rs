@@ -1,1 +1,0 @@
-openshmem/README.org
