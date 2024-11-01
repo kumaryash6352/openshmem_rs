@@ -17,12 +17,12 @@ See [./examples/](./examples/) for example programs.
 
 # Building
 
-This library depends on `openshmem-sys`{.txt}. Building the sys crate
-requires the environment variable `SHMEM_INSTALL_DIR`{.txt} to point to
+This library depends on `openshmem-sys`. Building the sys crate
+requires the environment variable `SHMEM_INSTALL_DIR` to point to
 a directory containing your OpenSHMEM installation. Your
-`SHMEM_INSTALL_DIR`{.txt} should contain a `lib/`{.txt} and a
-`include/`{.txt}. For example, this is the output of `tree`{.txt} on the
-`SHMEM_INSTALL_DIR`{.txt} for Sandia OpenSHMEM.
+`SHMEM_INSTALL_DIR` should contain a `lib/` and a
+`include/`. For example, this is the output of `tree` on the
+`SHMEM_INSTALL_DIR` for Sandia OpenSHMEM.
 
 ```.bash
 ├── ...
@@ -47,7 +47,7 @@ implementation.
 ## Developing
 
 If you want rust-analyzer to function correctly, you'll need to pass
-`SHMEM_INSTALL_DIR`{.txt} to rust-analyzer.
+`SHMEM_INSTALL_DIR` to rust-analyzer.
 
 ### [TODO] VSCode
 
@@ -55,7 +55,7 @@ If you want rust-analyzer to function correctly, you'll need to pass
 
 Add this to your configuration.
 
-``` {.elisp exports="code"}
+```elisp
 (setq lsp-rust-analyzer-cargo-extra-env ["SHMEM_INSTALL_DIR", "~/my-shmem-install-dir"])
 ```
 
