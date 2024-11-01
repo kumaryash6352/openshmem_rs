@@ -24,10 +24,9 @@ jobs:
 
     - name: Run Cargo Doc
       run: |
-        docker run --rm -v $(pwd)/temp_doc:/temp_doc --entrypoint /bin/sh docker-image -c "mkdir -p /temp_doc && cargo doc --no-deps --target-dir /temp_doc"
-        cp -r temp_doc/$(ls temp_doc)/doc target/doc
+        docker run --rm -v $(pwd)/docs:/out --entrypoint /bin/sh docker-image -c "cargo doc --no-deps && cp -r target/doc/openshmem_rs/* /out "
     - name: Upload Documentation
       uses: actions/upload-artifact@v3
       with:
         name: cargo-doc
-        path: target/doc
+        path: /out
