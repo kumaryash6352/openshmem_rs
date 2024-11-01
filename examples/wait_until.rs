@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use openshmem::ShmemCtx;
+use openshmem_rs::ShmemCtx;
 
 
 

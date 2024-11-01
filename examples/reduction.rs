@@ -1,6 +1,6 @@
 use std::{error::Error, fs::File, io::Read};
 
-use openshmem::ShmemCtx;
+use openshmem_rs::ShmemCtx;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let ctx = ShmemCtx::init()?;

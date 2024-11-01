@@ -1,4 +1,4 @@
-use openshmem::ShmemCtx;
+use openshmem_rs::ShmemCtx;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ShmemCtx::init()?;

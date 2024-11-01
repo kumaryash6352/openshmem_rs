@@ -5,7 +5,7 @@ use std::{
     time::Instant,
 };
 
-use openshmem::ShmemCtx;
+use openshmem_rs::ShmemCtx;
 
 // felt right
 const RESOLUTION: (usize, usize) = (8192, 7428);

@@ -1,4 +1,4 @@
-use openshmem::ShmemCtx;
+use openshmem_rs::ShmemCtx;
 use std::error::Error;
 
 /// Example from paper.
