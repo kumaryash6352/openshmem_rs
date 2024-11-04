@@ -17,7 +17,7 @@
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     fmt::Display,
-    marker::PhantomData,
+    marker::PhantomData, sync::Once,
 };
 
 use openshmem_sys::shmem::{
@@ -34,7 +34,7 @@ mod macros;
 use shmalloc::{PEReference, Shbox, Shmallocator};
 use thiserror::Error;
 
-// static CTX: OnceLock<ShmemCtx> = OnceLock::new();
+static CTX_INITIALIZED: Once = Once::new();
 
 // /// Get a reference to the global CTX,
 // /// if already instantiated.
@@ -92,6 +92,9 @@ pub enum ShmemError {
     /// remote PE.
     #[error("requested PE ({0}) inaccessible")]
     Inaccessible(PE),
+    /// The ShmemCTX has already been initialized through another init call.
+    #[error("already initialized shmem ctx")]
+    AlreadyInitialized,
     /// The error given by the underlying implementation
     /// is not defined by the specification.
     #[error("implementation defined: {0}")]
@@ -101,12 +104,7 @@ pub enum ShmemError {
 /// The world Shmem CTX. Unlike it's specification-defined
 /// counterpart, this is safe to instantiate multiple times.
 ///
-/// TODO: This is NOT SAFE to instantiate multiple times.
-///
-/// Repeated instantiations will provide a reference to the
-/// first CTX.
-///
-/// TODO: They won't.
+/// Repeated instantiations will return an Error.
 pub struct ShmemCtx {}
 
 // TODO: ShmemCtx trait:
@@ -132,8 +130,12 @@ impl ShmemCtx {
 
         //     ShmemCtx {}
         // }))
-        unsafe { shmem_init() }
-        Ok(Self {})
+        if CTX_INITIALIZED.is_completed() {
+            Err(ShmemError::AlreadyInitialized)
+        } else {
+            unsafe { shmem_init() }
+            Ok(Self {})
+        }
     }
 
     /// Returns the team this context refers to.

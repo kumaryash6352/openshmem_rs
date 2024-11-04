@@ -1,6 +1,6 @@
 [package]
 name = "openshmem-rs"
-version = "1.5.2-1"
+version = "1.5.2-2"
 edition = "2021"
 description = "Wrappers for the OpenSHMEM API."
 authors = ["Yash Kumar <ykumar@ttu.edu>"]
@@ -28,4 +28,4 @@ doc-scrape-examples = true
 
 [[example]]
 name = "gpu"
-doc-scrape-examples = true
+doc-scrape-examples = false
