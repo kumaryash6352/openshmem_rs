@@ -1,6 +1,6 @@
 [package]
 name = "openshmem-rs"
-version = "1.5.2"
+version = "1.5.2-1"
 edition = "2021"
 description = "Wrappers for the OpenSHMEM API."
 authors = ["Yash Kumar <ykumar@ttu.edu>"]
