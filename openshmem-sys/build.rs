@@ -1,7 +1,11 @@
 use std::path::PathBuf;
 
 fn main() {
-    let install_dir = std::env::var("SHMEM_INSTALL_DIR").expect("SHMEM_INSTALL_DIR to be provided!");
+    let install_dir = if std::env::var("DOCS_RS").is_ok() {
+        std::env::var("CARGO_MANIFEST_DIR").unwrap() + "/src/sos-headers"
+    } else {
+        std::env::var("SHMEM_INSTALL_DIR").expect("SHMEM_INSTALL_DIR to be provided!")
+    };
     println!("cargo:rustc-link-search={install_dir}/lib");
     println!("cargo:rustc-link-lib=sma");
     println!("cargo:rustc-link-lib=pmi_simple");
