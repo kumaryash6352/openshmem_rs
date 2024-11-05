@@ -840,10 +840,12 @@ pub struct Handle<'ctx, T> {
 }
 
 impl<'ctx, T> Handle<'ctx, T> {
+    /// Functionally, handle interpretation.
     pub unsafe fn interpret_as<E: Sized>(&self) -> &E {
         &*(self.ptr as *const E)
     }
 
+    /// Obtain a raw pointer to whatever this handle refers to.
     pub fn raw(&self) -> *mut c_void {
         self.ptr
     }
@@ -879,6 +881,8 @@ impl<'ctx, T> Handle<'ctx, T> {
 // }
 
 /// Represents types that have a `shmem_[and, or, xor]_reduce`.
+///
+/// See `Shbox` for safe wrappers of these methods.
 #[diagnostic::on_unimplemented(
     message = "no OpenSHMEM routine for boolean reductions into {Self}",
     label = "this {Self} here",
@@ -917,6 +921,8 @@ pub trait BooleanReducible: Sized {
     unsafe fn xor_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
 }
 /// Represents types that have a `shmem_[sum, prod]_reduce`.
+///
+/// See `Shbox` for safe wrappers of these methods.
 #[diagnostic::on_unimplemented(
     message = "no OpenSHMEM routine for arithmetic reductions into {Self}",
     label = "this {Self} here",
@@ -946,6 +952,8 @@ pub trait ArithmeticReducible: Sized {
     unsafe fn prod_into_many(shbox: &mut Shbox<'_, [Self]>, n: usize, ctx: &ShmemCtx);
 }
 /// Represents types that have a `shmem_[max, min]_reduce`.
+///
+/// See `Shbox` for safe wrappers of these methods.
 #[diagnostic::on_unimplemented(
     message = "no OpenSHMEM routine for max/min reductions into {Self}",
     label = "this {Self} here",
@@ -1028,6 +1036,8 @@ pub enum ShmemCompareOp {
 }
 
 /// Types that have shmem_wait_until routines.
+///
+/// See `Shbox` for safe wrappers of these methods.
 #[diagnostic::on_unimplemented(
     message = "no OpenSHMEM routine for waits into {Self}",
     label = "this {Self} here",
@@ -1054,16 +1064,3 @@ impl_waitable!(i32, int32);
 impl_waitable!(u64, uint64);
 impl_waitable!(i64, int64);
 impl_waitable!(usize, size);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // TODO: figure out how to run tests (since they need the whole oshrun business)
-    // #[test]
-    // fn init() {
-    //     let ctx = ShmemCtx::init().expect("shmem ctx to init");
-
-    //     //ctx_p();
-    // }
-}
