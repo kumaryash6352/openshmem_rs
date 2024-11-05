@@ -28,6 +28,9 @@ use openshmem_sys::shmem::{
     SHMEM_MAX_NAME_LEN, SHMEM_TEAM_WORLD,
 };
 
+#[cfg(test)]
+mod test;
+
 pub use openshmem_sys::shmem as ffi;
 mod macros;
 #[cfg(feature = "shmalloc")]
