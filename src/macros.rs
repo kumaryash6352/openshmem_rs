@@ -171,3 +171,125 @@ macro_rules! impl_waitable {
         }
     };
 }
+
+/// Implement AtomicFetch for a type that has
+/// fetch/set/swap routines in the SHMEM spec.
+/// Usage: `impl_atomic_fetch(rust_type_name, shmem_type_name)`
+/// Example: `impl_atomic_fetch(u8, uchar)`
+#[macro_export]
+macro_rules! impl_atomic_fetch {
+    ($type:ty, $typename:ident) => {
+        ::paste::paste! {
+            impl AtomicFetch for $type {
+                fn atomic_fetch(shbox: &Shbox<'_, Atomic<Self>>, from: PE, _ctx: &ShmemCtx) -> $type {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch>](shbox.raw_ptr() as *const $type,
+                                                                                        from.raw() as _) }
+                }
+                fn atomic_set(shbox: &Shbox<'_, Atomic<Self>>, new: $type, to: PE, _ctx: &ShmemCtx) {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_set>](shbox.raw_ptr() as *mut $type,
+                                                                                      new,
+                                                                                      to.raw() as _); }
+                }
+                fn atomic_swap(shbox: &Shbox<'_, Atomic<Self>>, with: $type, to: PE, _ctx: &ShmemCtx) -> $type {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_swap>](shbox.raw_ptr() as *mut $type,
+                                                                                       with,
+                                                                                       to.raw() as _) }
+                }
+            }
+        }
+    };
+}
+
+/// Implement AtomicInt for a type that has
+/// [fetch_]compare_swap/inc/addroutines in the SHMEM spec.
+/// Usage: `impl_atomic_int(rust_type_name, shmem_type_name)`
+/// Example: `impl_atomic_int(u32, uint32)`
+#[macro_export]
+macro_rules! impl_atomic_int {
+    ($type:ty, $typename:ident) => {
+        ::paste::paste! {
+            impl AtomicInt for $type {
+                fn atomic_compare_swap(shbox: &Shbox<'_, Atomic<$type>>, if_equals: $type, then_set_to: $type, on: PE, _ctx: &ShmemCtx) -> $type {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_compare_swap>](shbox.raw_ptr() as *mut $type,
+                                                                                               if_equals,
+                                                                                               then_set_to,
+                                                                                               on.raw() as _) }
+                }
+                fn atomic_fetch_inc(shbox: &Shbox<'_, Atomic<$type>>, from: PE, _ctx: &ShmemCtx) -> $type {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_inc>](shbox.raw_ptr() as *mut $type,
+                                                                                            from.raw() as _) }
+                }
+                fn atomic_inc(shbox: &Shbox<'_, Atomic<$type>>, to: PE, _ctx: &ShmemCtx) {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_inc>](shbox.raw_ptr() as *mut $type,
+                                                                                      to.raw() as _); }
+                }
+                fn atomic_fetch_add(shbox: &Shbox<'_, Atomic<$type>>, plus: $type, from: PE, _ctx: &ShmemCtx) -> $type {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_add>](shbox.raw_ptr() as *mut $type,
+                                                                                            plus,
+                                                                                            from.raw() as _) }
+                }
+                fn atomic_add(shbox: &Shbox<'_, Atomic<$type>>, plus: $type, to: PE, _ctx: &ShmemCtx) {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_add>](shbox.raw_ptr() as *mut $type,
+                                                                                      plus,
+                                                                                      to.raw() as _); }
+                }
+            }
+        }
+    };
+}
+
+/// Implement AtomicInt for a type that has
+/// [fetch_]compare_swap/inc/addroutines in the SHMEM spec.
+/// Usage: `impl_atomic_int(rust_type_name, shmem_type_name)`
+/// Example: `impl_atomic_int(u32, uint32)`
+#[macro_export]
+macro_rules! impl_atomic_bit {
+    ($type:ty, $typename:ident) => {
+        ::paste::paste! {
+            impl AtomicBitwise for $type {
+                fn atomic_fetch_and(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_and>](shbox.raw_ptr() as *mut $type,
+                                                                                            with,
+                                                                                            from.raw() as _) }
+                }
+                fn atomic_and(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_and>](shbox.raw_ptr() as *mut $type,
+                                                                                      with,
+                                                                                      to.raw() as _); }
+                }
+                fn atomic_fetch_or(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_or>](shbox.raw_ptr() as *mut $type,
+                                                                                            with,
+                                                                                            from.raw() as _) }
+                }
+                fn atomic_or(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_or>](shbox.raw_ptr() as *mut $type,
+                                                                                      with,
+                                                                                      to.raw() as _); }
+                }
+                fn atomic_fetch_xor(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_xor>](shbox.raw_ptr() as *mut $type,
+                                                                                            with,
+                                                                                            from.raw() as _) }
+                }
+                fn atomic_xor(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_xor>](shbox.raw_ptr() as *mut $type,
+                                                                                      with,
+                                                                                      to.raw() as _); }
+                }
+            }
+        }
+    };
+}
+
+// from https://users.rust-lang.org/t/ensure-that-struct-t-has-size-n-at-compile-time/61108/2
+// TODO: use this to implement AssertAtomic[32/64]
+/// Assert at compile time that a type has a given size.
+#[macro_export]
+macro_rules! assert_size_eq {
+    ($type:ty, $size:expr) => {
+        ::paste::paste! {
+            const _: [(); size] = [(); ::std::mem::size_of::<$type>()];
+        }
+    };
+}
