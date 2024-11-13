@@ -242,39 +242,41 @@ macro_rules! impl_atomic_int {
 /// [fetch_]compare_swap/inc/addroutines in the SHMEM spec.
 /// Usage: `impl_atomic_int(rust_type_name, shmem_type_name)`
 /// Example: `impl_atomic_int(u32, uint32)`
+// This macro is the only one that coerces into a type so far because
+// bitwise size operations don't exist for some reason. Fix soon?
 #[macro_export]
 macro_rules! impl_atomic_bit {
     ($type:ty, $typename:ident) => {
         ::paste::paste! {
             impl AtomicBitwise for $type {
                 fn atomic_fetch_and(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_and>](shbox.raw_ptr() as *mut $type,
-                                                                                            with,
-                                                                                            from.raw() as _) }
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_and>](shbox.raw_ptr() as *mut $type as *mut _,
+                                                                                            with as _,
+                                                                                            from.raw() as _) as _ }
                 }
                 fn atomic_and(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_and>](shbox.raw_ptr() as *mut $type,
-                                                                                      with,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_and>](shbox.raw_ptr() as *mut $type as *mut _,
+                                                                                      with as _,
                                                                                       to.raw() as _); }
                 }
                 fn atomic_fetch_or(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_or>](shbox.raw_ptr() as *mut $type,
-                                                                                            with,
-                                                                                            from.raw() as _) }
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_or>](shbox.raw_ptr() as *mut $type as *mut _,
+                                                                                            with as _,
+                                                                                            from.raw() as _) as _ }
                 }
                 fn atomic_or(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_or>](shbox.raw_ptr() as *mut $type,
-                                                                                      with,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_or>](shbox.raw_ptr() as *mut $type as *mut _,
+                                                                                      with as _,
                                                                                       to.raw() as _); }
                 }
                 fn atomic_fetch_xor(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_xor>](shbox.raw_ptr() as *mut $type,
-                                                                                            with,
-                                                                                            from.raw() as _) }
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_xor>](shbox.raw_ptr() as *mut $type as *mut _,
+                                                                                            with as _,
+                                                                                            from.raw() as _) as _ }
                 }
                 fn atomic_xor(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_xor>](shbox.raw_ptr() as *mut $type,
-                                                                                      with,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_xor>](shbox.raw_ptr() as *mut $type as *mut _,
+                                                                                      with as _,
                                                                                       to.raw() as _); }
                 }
             }
