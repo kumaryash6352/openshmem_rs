@@ -430,7 +430,7 @@ mod shmalloc {
         shmem_align, shmem_calloc, shmem_free, shmem_getmem, shmem_putmem, shmem_realloc,
     };
 
-    use crate::{ArithmeticReducible, BooleanReducible, CompareReducible, ShmemCtx, PE};
+    use crate::{ArithmeticReducible, Atomic, AtomicFetch, BooleanReducible, CompareReducible, ShmemCtx, PE};
 
     pub struct Shmallocator<'ctx> {
         // We hold on to the ctx so we can verify
@@ -633,6 +633,8 @@ mod shmalloc {
             unsafe { T::min_into_many(self, elements, ctx) }
         }
     }
+
+    impl<'ctx, T: AtomicFetch> Shbox<'ctx, Atomic<T>> {}
 
     impl<'ctx, T: ?Sized> Deref for Shbox<'ctx, T> {
         type Target = T;
@@ -1067,7 +1069,7 @@ impl_waitable!(u64, uint64);
 impl_waitable!(i64, int64);
 impl_waitable!(usize, size);
 
-// TODO: `FakeAtomic[16/32/64]`: uses associated int16/32/64 routines
+// TODO: `FakeAtomic[32/64]`: uses associated int32/64 routines
 //                               to atomically edit a datatype.
 /// An atomic version of a normal integer, float, or boolean.
 ///
@@ -1085,6 +1087,11 @@ impl<T: AtomicFetch> Atomic<T> {
     pub fn default() -> Self
     where T: Default {
         Self(Default::default())
+    }
+
+    /// Atomically reads the local value.
+    pub fn fetch_local(shbox: &Shbox<'_, Self>, ctx: &ShmemCtx) -> T {
+        T::atomic_fetch(shbox, ctx.my_pe(), ctx)
     }
 
     /// Fetch the value of the atomic from the given PE.
