@@ -1,6 +1,6 @@
 use std::{
     alloc::{AllocError, Allocator, Layout},
-    ffi::c_void,
+    ffi::{c_long, c_void},
     fmt::Debug,
     mem::{self, MaybeUninit},
     ops::{Deref, DerefMut, RangeBounds},
@@ -13,6 +13,8 @@ use openshmem_sys::shmem::{
 
 use crate::{ShmemCtx, PE};
 
+/// The Shmallocator handles [de]allocations on the Symmetric Heap.
+/// Note that, as the `'ctx` lifetime indicates, the ShmemCtx must outlive the Shmallocator.
 pub struct Shmallocator<'ctx> {
     // We hold on to the ctx so we can verify
     // that we have not shmem_finalize'd.
@@ -96,6 +98,8 @@ impl<'ctx> Shmallocator<'ctx> {
         // SAFETY: The `fill_with` has initializaed all elements of vec.
         Shbox {
             internal: unsafe { mem::transmute(vec) },
+            #[cfg(feature = "lockshbox")]
+            lock: Box::new_in(0, self)
         }
     }
 
@@ -111,6 +115,8 @@ impl<'ctx> Shmallocator<'ctx> {
         // SAFETY: The `fill_with` has initializaed all elements of vec.
         Shbox {
             internal: unsafe { mem::transmute(vec) },
+            #[cfg(feature = "lockshbox")]
+            lock: Box::new_in(0, self)
         }
     }
 
@@ -123,6 +129,8 @@ impl<'ctx> Shmallocator<'ctx> {
         // SAFETY: The `fill_with` has initializaed all elements of vec.
         Shbox {
             internal: unsafe { mem::transmute(vec) },
+            #[cfg(feature = "lockshbox")]
+            lock: Box::new_in(0, self)
         }
     }
 
@@ -133,28 +141,75 @@ impl<'ctx> Shmallocator<'ctx> {
     pub fn shbox<T>(&'ctx self, t: T) -> Shbox<'ctx, T> {
         Shbox {
             internal: Box::new_in(t, self),
+            #[cfg(feature = "lockshbox")]
+            lock: Box::new_in(0, self)
         }
     }
 }
 
+/// A Shbox<T> is a T on the symmetric heap.
+///
+/// Constructed using methods on a `Shmallocator`.
 pub struct Shbox<'ctx, T: ?Sized> {
     internal: Box<T, &'ctx Shmallocator<'ctx>>,
+    #[cfg(feature = "lockshbox")]
+    lock: Box<c_long, &'ctx Shmallocator<'ctx>>
 }
 
 impl<'ctx, T: ?Sized> Shbox<'ctx, T> {
+    /// Retrieve a reference to the underlying type.
+    ///
+    /// This is equivalent to `Deref::deref`'ing a `Shbox`.
+    #[cfg(not(feature = "lockshbox"))]
     pub fn raw(&self) -> &T {
         self.internal.as_ref()
     }
 
+    /// Retrieve a raw pointer to the underlying type.
+    ///
+    /// This pointer will point to the symmetric heap.
     pub fn raw_ptr(&self) -> *const T {
         self.internal.as_ref() as _
     }
 
+    /// Retrieve a raw mutable pointer to the underlying type.
+    ///
+    /// This pointer will point to the symmetric heap.
     pub fn raw_ptr_mut(&mut self) -> *mut T {
         self.internal.as_mut() as _
     }
+
+    #[cfg(feature = "lockshbox")]
+    pub fn lock<'a>(&'a mut self) -> ShboxLock<'a, 'ctx, T> {
+        use openshmem_sys::shmem::shmem_set_lock;
+
+        unsafe { shmem_set_lock(self.lock.as_mut() as *mut c_long) }
+        ShboxLock {
+            shbox: self
+        }
+    }
 }
 
+/// A lock on a Shbox. Equivalent to locking a Mutex for the Shbox.
+/// It is guaranteed no other PEs may access the Shbox while this lock exists.
+pub struct ShboxLock<'shbox, 'ctx: 'shbox, T: ?Sized> {
+    shbox: &'shbox mut Shbox<'ctx, T>,
+}
+
+impl<'shbox, 'ctx, T: ?Sized> Deref for ShboxLock<'shbox, 'ctx, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.shbox.internal.deref()
+    }
+}
+impl<'shbox, 'ctx, T: ?Sized> DerefMut for ShboxLock<'shbox, 'ctx, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.shbox.internal.deref_mut()
+    }
+}
+
+#[cfg(not(feature = "lockshbox"))]
 impl<'ctx, T: ?Sized> Deref for Shbox<'ctx, T> {
     type Target = T;
 
@@ -163,12 +218,14 @@ impl<'ctx, T: ?Sized> Deref for Shbox<'ctx, T> {
     }
 }
 
+#[cfg(not(feature = "lockshbox"))]
 impl<'ctx, T: ?Sized> DerefMut for Shbox<'ctx, T> {
     fn deref_mut(&mut self) -> &mut T {
         self.internal.deref_mut()
     }
 }
 
+#[cfg(not(feature = "lockshbox"))]
 impl<'ctx, T0: ?Sized + Debug> Debug for Shbox<'ctx, T0> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         <Box<T0, &'ctx Shmallocator<'ctx>> as Debug>::fmt(&self.internal, f)
@@ -215,7 +272,7 @@ where
         let (start, end) = apply_range_bounds(self.range.clone(), &self.buf);
         unsafe {
             shmem_putmem(
-                (self.into.as_ref() as *const [T] as *const T).offset(start as _) as *mut c_void,
+                (self.into.internal.as_ref() as *const [T] as *const T).offset(start as _) as *mut c_void,
                 self.buf.as_ptr() as *const c_void,
                 size_of::<T>() * (end - start + 1),
                 self.on.0 as _,
@@ -229,6 +286,11 @@ where
     R: RangeBounds<usize> + Clone,
     'ctx: 'shbox,
 {
+    /// Immediately push data to the remote PE.
+    ///
+    /// This is equivalent to dropping the view.
+    ///
+    /// In fact, the body is `drop(self)`.
     pub fn finish(self) {
         drop(self)
     }

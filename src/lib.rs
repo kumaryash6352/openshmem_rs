@@ -138,6 +138,7 @@ impl ShmemCtx {
         } else {
             // SAFETY: We check to see if CTX_INITIALIZAED already.
             unsafe { shmem_init() }
+            // TODO: check build time of all binaries, log error if they don't match
             CTX_INITIALIZED.call_once(|| {});
             Ok(Self {})
         }
