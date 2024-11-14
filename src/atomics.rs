@@ -1,12 +1,83 @@
+use std::marker::PhantomData;
+
+use bytemuck::{AnyBitPattern, Pod};
+
 // TODO: `FakeAtomic[32/64]`: uses associated int32/64 routines
 //                               to atomically edit a datatype.
-use crate::{impl_atomic_bit, impl_atomic_fetch, impl_atomic_int, shmalloc::Shbox, ShmemCtx, PE};
+use crate::{assert_size_eq, impl_atomic_bit, impl_atomic_fetch, impl_atomic_int, shmalloc::Shbox, ShmemCtx, PE};
 
 /// An atomic version of a normal integer, float, or boolean.
 ///
 /// This version can only be accessed by an instantaneous read or write:
 /// see `Atomic::read()` or the assortment of `Atomic*` traits.
 pub struct Atomic<T: AtomicFetch>(T);
+
+/// Marker struct for a `ForceAtomicFetch` that's 32 bit.
+#[derive(AnyBitPattern, Copy, Clone)]
+pub struct Size32;
+/// Marker struct for a `ForceAtomicFetch` that's 64 bit.
+#[derive(AnyBitPattern, Copy, Clone)]
+pub struct Size64;
+/// Marker trait for a `ForceAtomicFetch` size.
+pub trait Size {
+    /// The type that has shmem routines for that size;
+    type TreatAsA;
+}
+impl Size for Size32 {
+    type TreatAsA = u32;
+}
+impl Size for Size64 {
+    type TreatAsA = u64;
+}
+
+/// Wraps a 32 bit type, forcing atomic fetch, set, and swap operations
+/// to be implemented.
+///
+/// Size of type is checked at compile time.
+pub unsafe fn force_atomic32<T: Sized + Pod>(t: T) -> ForceAtomicFetch<T, Size32> {
+    ForceAtomicFetch(t, Default::default())
+}
+
+/// Wraps a 64 bit type, forcing atomic fetch, set, and swap operations
+/// to be implemented.
+///
+/// Size of type is checked at compile time.
+pub unsafe fn force_atomic64<T: Sized + Pod>(t: T) -> ForceAtomicFetch<T, Size64> {
+    ForceAtomicFetch(t, Default::default())
+}
+
+/// Forces a value to be compatible with atomic routines.
+/// All constructions of this type are unsafe. The generic
+/// must have a size of 32 or 64. This is enforced at compile time.
+#[derive(AnyBitPattern, Copy, Clone)]
+#[repr(transparent)]
+pub struct ForceAtomicFetch<T: Sized + Pod, S: Size>(T, PhantomData<S>);
+
+impl<T: Sized + Pod, S: Size> ForceAtomicFetch<T, S> {
+    const _SIZE_TEST: () = assert!(size_of::<T>() == size_of::<S::TreatAsA>(), "expected size of T to match given size!");
+}
+
+
+impl<T: Sized + Pod> AtomicFetch for ForceAtomicFetch<T, Size32>
+{
+    fn atomic_fetch(shbox: &Shbox<'_, Atomic<Self>>, from: PE, ctx: &ShmemCtx) -> Self {
+        unsafe {
+            bytemuck::cast( u32::atomic_fetch(std::mem::transmute(shbox), from, ctx) )
+        }
+    }
+
+    fn atomic_set(shbox: &Shbox<'_, Atomic<Self>>, new: Self, to: PE, ctx: &ShmemCtx) {
+        unsafe {
+            bytemuck::cast( u32::atomic_set(std::mem::transmute(shbox), bytemuck::cast(new.0), to, ctx) )
+        }
+    }
+
+    fn atomic_swap(shbox: &Shbox<'_, Atomic<Self>>, with: Self, to: PE, ctx: &ShmemCtx) -> Self {
+        unsafe {
+            bytemuck::cast( u32::atomic_swap(std::mem::transmute(shbox), bytemuck::cast(with.0), to, ctx) )
+        }
+    }
+}
 
 impl<T: AtomicFetch> Atomic<T> {
     /// Constructs a new Atomic from the value given.
