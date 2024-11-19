@@ -33,6 +33,7 @@ use thiserror::Error;
 
 pub use openshmem_sys::shmem as ffi;
 pub mod shmalloc;
+pub mod shmutex;
 pub mod wait;
 pub mod reduce;
 pub mod atomics;
@@ -482,6 +483,17 @@ impl<'ctx> PEReference<'ctx> {
         }
     }
 
+    /// Alias to `read`.
+    pub fn get<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R) -> Box<[T]>
+    where
+        'ctx: 'shbox,
+        T: Pod,
+        R: RangeBounds<usize> + Clone,
+    {
+        self.read(shbox, range)
+    }
+
+    /// Reads a slice from the `Shbox` on another PE.
     pub fn read<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R) -> Box<[T]>
     where
         'ctx: 'shbox,

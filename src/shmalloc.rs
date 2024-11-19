@@ -1,6 +1,6 @@
 use std::{
     alloc::{AllocError, Allocator, Layout},
-    ffi::{c_long, c_void},
+    ffi::c_void,
     fmt::Debug,
     mem::{self, MaybeUninit},
     ops::{Deref, DerefMut, RangeBounds},
@@ -11,7 +11,7 @@ use openshmem_sys::shmem::{
     shmem_align, shmem_calloc, shmem_free, shmem_putmem, shmem_realloc,
 };
 
-use crate::{ShmemCtx, PE};
+use crate::{shmutex::Shmlock, ShmemCtx, PE};
 
 /// The Shmallocator handles [de]allocations on the Symmetric Heap.
 /// Note that, as the `'ctx` lifetime indicates, the ShmemCtx must outlive the Shmallocator.
@@ -145,6 +145,14 @@ impl<'ctx> Shmallocator<'ctx> {
             lock: Box::new_in(0, self)
         }
     }
+
+    /// Constructs a Lock.
+    ///
+    /// This is a collective operation.
+    #[doc(alias = "shmlock")]
+    pub fn lock(&self) -> Shmlock<'_> {
+        Shmlock::new(&self)
+    }
 }
 
 /// A Shbox<T> is a T on the symmetric heap.
@@ -260,6 +268,9 @@ pub(crate) fn apply_range_bounds<R: RangeBounds<usize>, T>(bounds: R, t: &[T]) -
         std::ops::Bound::Excluded(x) => *x + 1,
         std::ops::Bound::Unbounded => 0,
     };
+    if end > t.len() { panic!("end of range out of bounds: {end} > {}", t.len()); }
+    if start > t.len() { panic!("start of range out of bounds: {end} > {}", t.len()); }
+    if start > end { panic!("invalid range: start before end: {start}..{end}"); }
     (start, end)
 }
 
