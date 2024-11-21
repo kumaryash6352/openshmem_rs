@@ -1,6 +1,6 @@
 [package]
 name = "openshmem-sys"
-version = "1.5.2-1"
+version = "1.5.3"
 edition = "2021"
 description = "Bindings for the OpenSHMEM API."
 authors = ["Yash Kumar <ykumar@ttu.edu>"]
@@ -13,3 +13,4 @@ bindgen = "0.69.4"
 [features]
 default = ["shmemx"]
 shmemx = []
+pretend_its_docrs = []

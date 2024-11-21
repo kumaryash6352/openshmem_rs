@@ -10,6 +10,8 @@
 //       ASAP.
 #![allow(improper_ctypes)]
 
+#![cfg_attr(any(docsrs, feature = "pretend_its_docrs"), doc = include_str!("docs.rs.md"))]
+
 pub mod shmem;
 
 #[cfg(feature = "shmemx")]
