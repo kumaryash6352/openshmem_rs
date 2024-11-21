@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 fn main() {
     let install_dir = if std::env::var("DOCS_RS").is_ok() {
-        std::env::var("CARGO_MANIFEST_DIR").unwrap() + "/osss-ucx/include/shmem"
+        std::env::var("CARGO_MANIFEST_DIR").unwrap() + "/osss-ucx"
     } else {
         std::env::var("SHMEM_INSTALL_DIR").expect("SHMEM_INSTALL_DIR to be provided!")
     };
