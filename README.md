@@ -11,6 +11,14 @@ let npes = ctx.n_pes();
 println!("Hello from PE {my_pe}!");
 ```
 
+```sh
+$ export SHMEM_INSTALL_DIR=/path/to/openshmem/installation
+$ cargo build
+$ oshrun -n 2 ./target/debug/my_program
+Hello from PE 1!
+Hello from PE 0!
+```
+
 # Examples
 
 See [./examples/](./examples/) for example programs.
