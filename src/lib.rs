@@ -519,6 +519,29 @@ impl<'ctx> PEReference<'ctx> {
         //         we read valid T's.
         unsafe { mem::transmute(buffer) }
     }
+
+    /// Equivalent to `read`, but into a user-provided buffer instead
+    /// of allocating. Panics if the buffer is not large enough.
+    pub fn read_into<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R, into: &mut [T])
+    where
+        'ctx: 'shbox,
+        T: Pod,
+        R: RangeBounds<usize> + Clone,
+    {
+        let (start, end) = apply_range_bounds(range.clone(), shbox);
+        let buffer_size = end - start + 1;
+        assert!(into.len() >= buffer_size, "provided buffer was not large enough!");
+        // SAFETY: shbox is on the symmetric heap since, well, it's a shbox.
+        //         we know buffer has enough capacity by the assert
+        unsafe {
+            shmem_getmem(
+                into.as_mut_ptr() as *mut c_void,
+                (shbox.as_ref() as *const [T] as *const T).offset(start as _) as *mut c_void,
+                buffer_size * size_of::<T>(),
+                self.pe.0 as _,
+            )
+        }
+    }
 }
 
 /// Marker for Handles to a Team.

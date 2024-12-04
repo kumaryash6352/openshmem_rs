@@ -170,7 +170,7 @@ impl_atomic_fetch!(usize, size);
 #[diagnostic::on_unimplemented(
     message = "no OpenSHMEM routine for atomic math on {Self}",
     label = "this {Self} here",
-    note = "OpenSHMEM provides set/get for 32 and 64 bit types"
+    note = "OpenSHMEM provides atomic math for 32 and 64 bit types"
 )]
 pub trait AtomicInt: Sized + AtomicFetch {
     /// Apply `shmem_[typename]_compare_swap`.
