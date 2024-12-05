@@ -53,6 +53,15 @@ a directory containing your OpenSHMEM installation. Your
 We currently test with Sandia OpenSHMEM as the underlying OpenSHMEM
 implementation.
 
+## Versioning
+
+We do not fully follow semver. Instead, the version of the OpenSHMEM specification used is determined
+by the release and major versions of the package. Breaking changes are noted with the
+minor version of the library.
+
+For example, if the released version of the library is `1.5.3`, that release is the third revision of the bindings
+to revision 1.5 of the OpenSHMEM specification.
+
 ## Developing
 
 If you want rust-analyzer to function correctly, you'll need to pass
