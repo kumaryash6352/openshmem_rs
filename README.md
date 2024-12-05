@@ -18,6 +18,7 @@ $ oshrun -n 2 ./target/debug/my_program
 Hello from PE 1!
 Hello from PE 0!
 ```
+See the [Dockerfile](./Dockerfile) for an example environment with [Sandia OpenSHMEM](https://github.com/Sandia-OpenSHMEM/SOS).
 
 # Examples
 
