@@ -14,14 +14,19 @@
 use crate::shmalloc::{apply_range_bounds, MutableArrayView, Shbox, Shmallocator};
 use bytemuck::Pod;
 use std::{
-    ffi::{c_char, c_void, CStr, CString}, ops::RangeBounds, fmt::Display, marker::PhantomData, mem::{self, MaybeUninit}, sync::Once
+    ffi::{c_char, c_void, CStr, CString},
+    fmt::Display,
+    marker::PhantomData,
+    mem::{self, MaybeUninit},
+    ops::RangeBounds,
+    sync::Once,
 };
 
 use openshmem_sys::shmem::{
-    shmem_addr_accessible, shmem_barrier_all, shmem_ctx_t, shmem_finalize, shmem_global_exit,
-    shmem_impl_team_t, shmem_info_get_name, shmem_info_get_version, shmem_init, shmem_my_pe,
-    shmem_n_pes, shmem_pe_accessible, shmem_ptr, shmem_team_config_t, shmem_team_my_pe, shmem_getmem,
-    SHMEM_MAX_NAME_LEN, SHMEM_TEAM_WORLD,
+    shmem_addr_accessible, shmem_barrier_all, shmem_ctx_t, shmem_finalize, shmem_getmem,
+    shmem_global_exit, shmem_impl_team_t, shmem_info_get_name, shmem_info_get_version, shmem_init,
+    shmem_my_pe, shmem_n_pes, shmem_pe_accessible, shmem_ptr, shmem_putmem, shmem_team_config_t,
+    shmem_team_my_pe, SHMEM_MAX_NAME_LEN, SHMEM_TEAM_WORLD,
 };
 
 #[cfg(test)]
@@ -30,13 +35,12 @@ mod test;
 mod macros;
 use thiserror::Error;
 
-
 pub use openshmem_sys::shmem as ffi;
+pub mod atomics;
+pub mod reduce;
 pub mod shmalloc;
 pub mod shmutex;
 pub mod wait;
-pub mod reduce;
-pub mod atomics;
 
 static CTX_INITIALIZED: Once = Once::new();
 
@@ -483,6 +487,33 @@ impl<'ctx> PEReference<'ctx> {
         }
     }
 
+    /// Instantly replace the first `data.len()` elements of `shbox @ PE`
+    /// with the elements from `data`.
+    ///
+    /// # Panics
+    /// If `data.len() > shbox.len()`, panic.
+    pub fn write_from<'shbox, T>(&self, shbox: &'shbox mut Shbox<'ctx, [T]>, data: &[T])
+    where
+        'ctx: 'shbox,
+        T: Pod,
+    {
+        if data.len() > shbox.len() {
+            panic!("tried to write more data into a shbox than would fit!");
+        }
+
+        // SAFETY: shbox is on the symmetric heap by construction
+        //         shbox has room for at laest data.len() elements,
+        //         or we would've panicked
+        unsafe {
+            shmem_putmem(
+                shbox.as_mut_ptr() as *mut c_void,
+                data.as_ptr() as *const c_void,
+                size_of::<T>() * data.len(),
+                self.pe.0 as _,
+            );
+        }
+    }
+
     /// Alias to `read`.
     pub fn get<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R) -> Box<[T]>
     where
@@ -530,7 +561,10 @@ impl<'ctx> PEReference<'ctx> {
     {
         let (start, end) = apply_range_bounds(range.clone(), shbox);
         let buffer_size = end - start + 1;
-        assert!(into.len() >= buffer_size, "provided buffer was not large enough!");
+        assert!(
+            into.len() >= buffer_size,
+            "provided buffer was not large enough!"
+        );
         // SAFETY: shbox is on the symmetric heap since, well, it's a shbox.
         //         we know buffer has enough capacity by the assert
         unsafe {

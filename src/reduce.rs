@@ -166,29 +166,29 @@ impl<'ctx, T: CompareReducible> Shbox<'ctx, T> {
 }
 
 impl<'ctx, T: ArithmeticReducible> Shbox<'ctx, [T]> {
-    pub fn reduce_sum(&mut self, elements: usize, ctx: &ShmemCtx) {
-        unsafe { T::sum_into_many(self, elements, ctx) }
+    pub fn reduce_sum(&mut self, ctx: &ShmemCtx) {
+        unsafe { T::sum_into_many(self, self.len(), ctx) }
     }
-    pub fn reduce_prod(&mut self, elements: usize, ctx: &ShmemCtx) {
-        unsafe { T::prod_into_many(self, elements, ctx) }
+    pub fn reduce_prod(&mut self, ctx: &ShmemCtx) {
+        unsafe { T::prod_into_many(self, self.len(), ctx) }
     }
 }
 impl<'ctx, T: BooleanReducible> Shbox<'ctx, [T]> {
-    pub fn reduce_and(&mut self, elements: usize, ctx: &ShmemCtx) {
-        unsafe { T::and_into_many(self, elements, ctx) }
+    pub fn reduce_and(&mut self, ctx: &ShmemCtx) {
+        unsafe { T::and_into_many(self, self.len(), ctx) }
     }
-    pub fn reduce_or(&mut self, elements: usize, ctx: &ShmemCtx) {
-        unsafe { T::or_into_many(self, elements, ctx) }
+    pub fn reduce_or(&mut self, ctx: &ShmemCtx) {
+        unsafe { T::or_into_many(self, self.len(), ctx) }
     }
-    pub fn reduce_xor(&mut self, elements: usize, ctx: &ShmemCtx) {
-        unsafe { T::xor_into_many(self, elements, ctx) }
+    pub fn reduce_xor(&mut self, ctx: &ShmemCtx) {
+        unsafe { T::xor_into_many(self, self.len(), ctx) }
     }
 }
 impl<'ctx, T: CompareReducible> Shbox<'ctx, [T]> {
-    pub fn reduce_max(&mut self, elements: usize, ctx: &ShmemCtx) {
-        unsafe { T::max_into_many(self, elements, ctx) }
+    pub fn reduce_max(&mut self, ctx: &ShmemCtx) {
+        unsafe { T::max_into_many(self, self.len(), ctx) }
     }
-    pub fn reduce_min(&mut self, elements: usize, ctx: &ShmemCtx) {
-        unsafe { T::min_into_many(self, elements, ctx) }
+    pub fn reduce_min(&mut self, ctx: &ShmemCtx) {
+        unsafe { T::min_into_many(self, self.len(), ctx) }
     }
 }

@@ -34,7 +34,13 @@ impl<'ctx> Shmlock<'ctx> {
     /// When dropped, the lock is cleared.
     #[doc(alias = "acquire")]
     pub fn lock<'shmlock>(&'shmlock self) -> ShmlockLock<'ctx, 'shmlock> {
+        // SAFETY: By construction, self.0 is on the symmetric heap
         unsafe { shmem_set_lock(self.0.raw_ptr() as *mut c_long) };
         ShmlockLock(self)
     }
+}
+
+pub struct Shmutex<'ctx, T> {
+    locks: Shbox<'ctx, [c_long]>,
+    data: Shbox<'ctx, T>
 }
