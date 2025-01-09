@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{cell::UnsafeCell, marker::PhantomData};
 
 use bytemuck::{AnyBitPattern, Pod};
 
@@ -10,7 +10,12 @@ use crate::{impl_atomic_bit, impl_atomic_fetch, impl_atomic_int, shmalloc::Shbox
 ///
 /// This version can only be accessed by an instantaneous read or write:
 /// see `Atomic::read()` or the assortment of `Atomic*` traits.
-pub struct Atomic<T: AtomicFetch>(T);
+///
+// # Safety
+// The contained UnsafeCell must not be used for accessing the wrapped
+// value EXCEPT in the case of a collective downgrade. OpenSHMEM
+// atomic_* routines must be used instead.
+pub struct Atomic<T: AtomicFetch>(UnsafeCell<T>);
 
 /// Marker struct for a `ForceAtomicFetch` that's 32 bit.
 #[derive(AnyBitPattern, Copy, Clone)]
@@ -119,13 +124,18 @@ impl<T: Sized + Pod> AtomicFetch for ForceAtomicFetch<T, Size64>
 impl<T: AtomicFetch> Atomic<T> {
     /// Constructs a new Atomic from the value given.
     pub fn new(x: T) -> Self {
-        Self(x)
+        Self(UnsafeCell::from(x))
     }
 
     /// Constructs a new Atomic using the default value of the type.
     pub fn default() -> Self
     where T: Default {
         Self(Default::default())
+    }
+
+    /// Aliases `UnsafeCell::get`
+    fn get_cell_ptr(&self) -> *mut T {
+        UnsafeCell::get(&self.0)
     }
 
     /// Atomically reads the local value.
