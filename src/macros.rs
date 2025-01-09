@@ -210,26 +210,26 @@ macro_rules! impl_atomic_int {
         ::paste::paste! {
             impl AtomicInt for $type {
                 fn atomic_compare_swap(shbox: &Shbox<'_, Atomic<$type>>, if_equals: $type, then_set_to: $type, on: PE, _ctx: &ShmemCtx) -> $type {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_compare_swap>](shbox.get_cell_ptr() as *mut $type,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_compare_swap>](shbox.raw_ptr() as *mut $type,
                                                                                                if_equals,
                                                                                                then_set_to,
                                                                                                on.raw() as _) }
                 }
                 fn atomic_fetch_inc(shbox: &Shbox<'_, Atomic<$type>>, from: PE, _ctx: &ShmemCtx) -> $type {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_inc>](shbox.get_cell_ptr() as *mut $type,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_inc>](shbox.raw_ptr() as *mut $type,
                                                                                             from.raw() as _) }
                 }
                 fn atomic_inc(shbox: &Shbox<'_, Atomic<$type>>, to: PE, _ctx: &ShmemCtx) {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_inc>](shbox.get_cell_ptr() as *mut $type,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_inc>](shbox.raw_ptr() as *mut $type,
                                                                                       to.raw() as _); }
                 }
                 fn atomic_fetch_add(shbox: &Shbox<'_, Atomic<$type>>, plus: $type, from: PE, _ctx: &ShmemCtx) -> $type {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_add>](shbox.get_cell_ptr() as *mut $type,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_add>](shbox.raw_ptr() as *mut $type,
                                                                                             plus,
                                                                                             from.raw() as _) }
                 }
                 fn atomic_add(shbox: &Shbox<'_, Atomic<$type>>, plus: $type, to: PE, _ctx: &ShmemCtx) {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_add>](shbox.get_cell_ptr() as *mut $type,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_add>](shbox.raw_ptr() as *mut $type,
                                                                                       plus,
                                                                                       to.raw() as _); }
                 }
@@ -242,38 +242,40 @@ macro_rules! impl_atomic_int {
 /// [fetch_]compare_swap/inc/addroutines in the SHMEM spec.
 /// Usage: `impl_atomic_int(rust_type_name, shmem_type_name)`
 /// Example: `impl_atomic_int(u32, uint32)`
+// This macro is the only one that coerces into a type so far because
+// bitwise size operations don't exist for some reason. Fix soon?
 #[macro_export]
 macro_rules! impl_atomic_bit {
     ($type:ty, $typename:ident) => {
         ::paste::paste! {
             impl AtomicBitwise for $type {
                 fn atomic_fetch_and(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_and>](shbox.get_cell_ptr() as *mut $type as *mut _,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_and>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                             with as _,
                                                                                             from.raw() as _) as _ }
                 }
                 fn atomic_and(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_and>](shbox.get_cell_ptr() as *mut $type as *mut _,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_and>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                       with as _,
                                                                                       to.raw() as _); }
                 }
                 fn atomic_fetch_or(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_or>](shbox.get_cell_ptr() as *mut $type as *mut _,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_or>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                             with as _,
                                                                                             from.raw() as _) as _ }
                 }
                 fn atomic_or(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_or>](shbox.get_cell_ptr() as *mut $type as *mut _,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_or>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                       with as _,
                                                                                       to.raw() as _); }
                 }
                 fn atomic_fetch_xor(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_xor>](shbox.get_cell_ptr() as *mut $type as *mut _,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_xor>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                             with as _,
                                                                                             from.raw() as _) as _ }
                 }
                 fn atomic_xor(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
-                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_xor>](shbox.get_cell_ptr() as *mut $type as *mut _,
+                    unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_xor>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                       with as _,
                                                                                       to.raw() as _); }
                 }
@@ -281,7 +283,6 @@ macro_rules! impl_atomic_bit {
         }
     };
 }
-
 
 // from https://users.rust-lang.org/t/ensure-that-struct-t-has-size-n-at-compile-time/61108/2
 // TODO: use this to implement AssertAtomic[32/64]
