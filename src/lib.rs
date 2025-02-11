@@ -12,21 +12,24 @@
 #![feature(allocator_api, set_ptr_value, ptr_as_ref_unchecked)]
 
 use crate::shmalloc::{apply_range_bounds, MutableArrayView, Shbox, Shmallocator};
-use bytemuck::Pod;
+use bytemuck::{Pod, Zeroable};
+use nbi::{nbi_op, nbi_slice_op, NbiOp, PendingNbiOp, PendingNbiSliceOp};
 use std::{
+    cell::UnsafeCell,
     ffi::{c_char, c_void, CStr, CString},
     fmt::Display,
     marker::PhantomData,
-    mem::{self, MaybeUninit},
+    mem::{self, transmute, MaybeUninit},
     ops::RangeBounds,
     sync::Once,
 };
 
 use openshmem_sys::shmem::{
-    shmem_addr_accessible, shmem_barrier_all, shmem_ctx_t, shmem_finalize, shmem_getmem,
-    shmem_global_exit, shmem_impl_team_t, shmem_info_get_name, shmem_info_get_version, shmem_init,
-    shmem_my_pe, shmem_n_pes, shmem_pe_accessible, shmem_ptr, shmem_putmem, shmem_team_config_t,
-    shmem_team_my_pe, SHMEM_MAX_NAME_LEN, SHMEM_TEAM_WORLD,
+    shmem_addr_accessible, shmem_barrier_all, shmem_collectmem, shmem_ctx_t, shmem_finalize,
+    shmem_getmem, shmem_getmem_nbi, shmem_global_exit, shmem_impl_team_t, shmem_info_get_name,
+    shmem_info_get_version, shmem_init, shmem_my_pe, shmem_n_pes, shmem_pe_accessible, shmem_ptr,
+    shmem_putmem, shmem_quiet, shmem_team_config_t, shmem_team_my_pe, SHMEM_MAX_NAME_LEN,
+    SHMEM_TEAM_WORLD,
 };
 
 #[cfg(test)]
@@ -37,6 +40,7 @@ use thiserror::Error;
 
 pub use openshmem_sys::shmem as ffi;
 pub mod atomics;
+pub mod nbi;
 pub mod reduce;
 pub mod shmalloc;
 pub mod shmutex;
@@ -388,9 +392,51 @@ impl ShmemCtx {
             pe: PE(pe as _),
         }
     }
-}
 
-// pub trait ShmemData: Pod + Clone {}
+    /// Finalize pending NBI operations.
+    ///
+    /// Common things that implement NbiOp:
+    /// 1. `PendingNbi[Slice]Op`
+    /// 2. `Vec<NbiOp>`
+    /// 3. Tuples of `NbiOp`
+    ///
+    /// Equivalent to `shmem_quiet`.
+    pub fn quiet<Nbis>(&self, nbis: Nbis) -> Nbis::Output
+    where
+        Nbis: NbiOp,
+    {
+        // SAFETY: We have initialized the library since we've a context.
+        unsafe {
+            shmem_quiet();
+            nbis.after_quiet()
+        }
+    }
+
+    /// Construct an array containing all elements in `from`
+    /// across all involved PEs.
+    ///
+    /// Equivalent to `shmem_collect`.
+    pub fn collect<T>(&self, from: &Shbox<'_, [T]>) -> Box<[T]> {
+        let shm = self.shmallocator();
+        let mut total_buffer_size = shm.shbox(from.len());
+        total_buffer_size.reduce_sum(&self);
+        let mut buf: Box<[MaybeUninit<T>]> = Box::new_uninit_slice(*total_buffer_size);
+
+        // SAFETY: By construction, `from` is on the symmetric heap.
+        //         We created `buf` with enough storage for all PEs elements.
+        unsafe {
+            shmem_collectmem(
+                SHMEM_TEAM_WORLD,
+                buf.as_mut_ptr() as *mut c_void,
+                from.as_ptr() as *const c_void,
+                *total_buffer_size * size_of::<T>(),
+            );
+        }
+
+        // SAFETY: `shmem_collect` has copied `total_buffer_size`.
+        unsafe { transmute(buf) }
+    }
+}
 
 /// Thin wrapper over `shmem_team_config_t`.
 ///
@@ -575,6 +621,57 @@ impl<'ctx> PEReference<'ctx> {
                 self.pe.0 as _,
             )
         }
+    }
+
+    pub fn read_nbi<'shbox, R, T>(
+        &self,
+        shbox: &'shbox Shbox<'ctx, [T]>,
+        range: R,
+    ) -> PendingNbiSliceOp<'shbox, T>
+    where
+        'ctx: 'shbox,
+        T: Pod,
+        R: RangeBounds<usize> + Clone,
+    {
+        let (start, end) = apply_range_bounds(range.clone(), shbox);
+        let buffer_size = end - start + 1;
+        // SAFETY: UnsafeCell<T> is transparent over T.
+        let buffer: Box<UnsafeCell<[MaybeUninit<T>]>> =
+            unsafe { transmute(Box::<[T]>::new_uninit_slice(buffer_size)) };
+        unsafe {
+            shmem_getmem_nbi(
+                buffer.get() as *mut c_void,
+                (shbox.as_ref() as *const [T] as *const T).offset(start as _) as *mut c_void,
+                buffer_size * size_of::<T>(),
+                self.pe.0 as _,
+            )
+        }
+        unsafe { nbi_slice_op(buffer) }
+    }
+
+    pub fn get_single_nbi<'shbox, T>(
+        &self,
+        shbox: &Shbox<'shbox, [T]>,
+        idx: usize,
+    ) -> PendingNbiOp<'shbox, T>
+    where
+        T: Pod,
+    {
+        assert!(
+            idx < shbox.len(),
+            "tried to idx out of bounds: len {}, idx {idx}",
+            shbox.len()
+        );
+        let buffer = Box::new(UnsafeCell::new(MaybeUninit::uninit()));
+        unsafe {
+            shmem_getmem_nbi(
+                buffer.get() as *mut c_void,
+                (shbox.as_ref() as *const [T] as *const T).offset(idx as _) as *mut c_void,
+                size_of::<T>(),
+                self.pe.0 as _,
+            )
+        }
+        unsafe { nbi_op(buffer) }
     }
 }
 

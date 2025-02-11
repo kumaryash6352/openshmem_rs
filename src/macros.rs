@@ -295,3 +295,22 @@ macro_rules! assert_size_eq {
         }
     };
 }
+
+/// impl_nbiop_tuple!(A, B, C, etc.) -> impl NbiOp for (A, B, C, etc.)
+#[macro_export]
+macro_rules! impl_nbiop_tuple {
+    ($($ty:ident),*) => {
+        impl<'shm, $($ty),*> NbiOp for ($($ty),*)
+        where
+            $($ty: NbiOp),*
+        {
+            type Output = ($($ty::Output),*);
+
+            unsafe fn after_quiet(self) -> Self::Output {
+                #[allow(non_snake_case)]
+                let ($($ty),*) = self;
+                ($($ty.after_quiet()),*)
+            }
+        }
+    };
+}

@@ -70,12 +70,16 @@ ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/scratch/sos-bin/lib
 WORKDIR /scratch/openshmem-rs
 COPY . .
 
-WORKDIR /scratch/openshmem-rs/openshmem
-RUN cargo build --example mandlebrot
+WORKDIR /scratch/openshmem-rs
+RUN cargo build
 
+WORKDIR /scratch/openshmem-rs/shmembench
+RUN cargo build --release
+
+#ENTRYPOINT ["mpiexec.hydra", "-n", "2", "./target/release/shmembench-rs", "--bench", "atomic-inc", "--ntimes", "100"]
 # WORKDIR /scratch/shmemvv
 # RUN oshcc test.c
 
 #ENTRYPOINT ["/scratch/sosbin/bin/oshrun", "--allow-run-as-root", "-n", "2", "--", "./a.out"]
-ENTRYPOINT ["mpiexec.hydra", "-l", "-n", "1", "gdb", "--args", "./target/debug/examples/mandlebrot", ":", "-n", "1", "./target/debug/examples/mandlebrot"]
+#ENTRYPOINT ["mpiexec.hydra", "-l", "-n", "1", "gdb", "--args", "./target/debug/examples/mandlebrot", ":", "-n", "1", "./target/debug/examples/mandlebrot"]
 #ENTRYPOINT "bash"

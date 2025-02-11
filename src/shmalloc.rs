@@ -11,7 +11,7 @@ use openshmem_sys::shmem::{
     shmem_align, shmem_calloc, shmem_free, shmem_putmem, shmem_realloc,
 };
 
-use crate::{shmutex::Shmlock, ShmemCtx, PE};
+use crate::{atomics::{Atomic, AtomicFetch}, shmutex::Shmlock, ShmemCtx, PE};
 
 /// The Shmallocator handles [de]allocations on the Symmetric Heap.
 /// Note that, as the `'ctx` lifetime indicates, the ShmemCtx must outlive the Shmallocator.
@@ -98,8 +98,6 @@ impl<'ctx> Shmallocator<'ctx> {
         // SAFETY: The `fill_with` has initializaed all elements of vec.
         Shbox {
             internal: unsafe { mem::transmute(vec) },
-            #[cfg(feature = "lockshbox")]
-            lock: Box::new_in(0, self)
         }
     }
 
@@ -115,8 +113,6 @@ impl<'ctx> Shmallocator<'ctx> {
         // SAFETY: The `fill_with` has initializaed all elements of vec.
         Shbox {
             internal: unsafe { mem::transmute(vec) },
-            #[cfg(feature = "lockshbox")]
-            lock: Box::new_in(0, self)
         }
     }
 
@@ -129,8 +125,6 @@ impl<'ctx> Shmallocator<'ctx> {
         // SAFETY: The `fill_with` has initializaed all elements of vec.
         Shbox {
             internal: unsafe { mem::transmute(vec) },
-            #[cfg(feature = "lockshbox")]
-            lock: Box::new_in(0, self)
         }
     }
 
@@ -141,8 +135,6 @@ impl<'ctx> Shmallocator<'ctx> {
     pub fn shbox<T>(&'ctx self, t: T) -> Shbox<'ctx, T> {
         Shbox {
             internal: Box::new_in(t, self),
-            #[cfg(feature = "lockshbox")]
-            lock: Box::new_in(0, self)
         }
     }
 
@@ -160,8 +152,6 @@ impl<'ctx> Shmallocator<'ctx> {
 /// Constructed using methods on a `Shmallocator`.
 pub struct Shbox<'ctx, T: ?Sized> {
     internal: Box<T, &'ctx Shmallocator<'ctx>>,
-    #[cfg(feature = "lockshbox")]
-    lock: Box<c_long, &'ctx Shmallocator<'ctx>>
 }
 
 impl<'ctx, T: ?Sized> Shbox<'ctx, T> {
@@ -185,35 +175,6 @@ impl<'ctx, T: ?Sized> Shbox<'ctx, T> {
     /// This pointer will point to the symmetric heap.
     pub fn raw_ptr_mut(&mut self) -> *mut T {
         self.internal.as_mut() as _
-    }
-
-    #[cfg(feature = "lockshbox")]
-    pub fn lock<'a>(&'a mut self) -> ShboxLock<'a, 'ctx, T> {
-        use openshmem_sys::shmem::shmem_set_lock;
-
-        unsafe { shmem_set_lock(self.lock.as_mut() as *mut c_long) }
-        ShboxLock {
-            shbox: self
-        }
-    }
-}
-
-/// A lock on a Shbox. Equivalent to locking a Mutex for the Shbox.
-/// It is guaranteed no other PEs may access the Shbox while this lock exists.
-pub struct ShboxLock<'shbox, 'ctx: 'shbox, T: ?Sized> {
-    shbox: &'shbox mut Shbox<'ctx, T>,
-}
-
-impl<'shbox, 'ctx, T: ?Sized> Deref for ShboxLock<'shbox, 'ctx, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.shbox.internal.deref()
-    }
-}
-impl<'shbox, 'ctx, T: ?Sized> DerefMut for ShboxLock<'shbox, 'ctx, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        self.shbox.internal.deref_mut()
     }
 }
 
@@ -326,3 +287,5 @@ where
         self.buf.as_mut()
     }
 }
+
+unsafe impl<'ctx, T: AtomicFetch> Sync for Shbox<'ctx, Atomic<T>> {}
