@@ -12,7 +12,8 @@
 #![feature(allocator_api, set_ptr_value, ptr_as_ref_unchecked)]
 
 use crate::shmalloc::{apply_range_bounds, MutableArrayView, Shbox, Shmallocator};
-use bytemuck::{Pod, Zeroable};
+use bytemuck::AnyBitPattern;
+pub use bytemuck::Pod;
 use nbi::{nbi_op, nbi_slice_op, NbiOp, PendingNbiOp, PendingNbiSliceOp};
 use std::{
     cell::UnsafeCell,
@@ -458,10 +459,14 @@ impl TeamConfig {
 
 impl Drop for ShmemCtx {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            unsafe { shmem_global_exit(1); }
+        } else {
+            unsafe { shmem_finalize() }
+        }
         // SAFETY: Since we are dropping THE only CTX
         //         in the program, there is no other
         //         safe way to call shmem routines.
-        unsafe { shmem_finalize() }
     }
 }
 
@@ -510,14 +515,14 @@ impl<'ctx> PEReference<'ctx> {
     ///
     /// Note that the data in the slice is a copy of the LOCAL SHBOX's array at
     /// that point. TODO: I dunno what to do about that.
-    pub fn write<'a, 'shbox, R, T>(
+    pub fn put_view<'a, 'shbox, R, T>(
         &self,
         shbox: &'shbox mut Shbox<'ctx, [T]>,
         range: R,
     ) -> MutableArrayView<'ctx, 'shbox, T, R>
     where
         'ctx: 'shbox,
-        T: Pod,
+        T: AnyBitPattern,
         R: RangeBounds<usize> + Clone,
     {
         let buffer_size = {
@@ -533,145 +538,102 @@ impl<'ctx> PEReference<'ctx> {
         }
     }
 
+    pub fn put<'shbox, T>(&self, shbox: &'shbox mut Shbox<'ctx, T>, data: &T)
+    where
+        'ctx: 'shbox,
+        T: AnyBitPattern,
+    {
+        shbox.put(data, self.pe, self.ctx)
+    }
+
     /// Instantly replace the first `data.len()` elements of `shbox @ PE`
     /// with the elements from `data`.
     ///
     /// # Panics
     /// If `data.len() > shbox.len()`, panic.
-    pub fn write_from<'shbox, T>(&self, shbox: &'shbox mut Shbox<'ctx, [T]>, data: &[T])
+    pub fn put_many<'shbox, T>(&self, shbox: &'shbox mut Shbox<'ctx, [T]>, data: &[T])
     where
         'ctx: 'shbox,
-        T: Pod,
+        T: AnyBitPattern,
     {
-        if data.len() > shbox.len() {
-            panic!("tried to write more data into a shbox than would fit!");
-        }
-
-        // SAFETY: shbox is on the symmetric heap by construction
-        //         shbox has room for at laest data.len() elements,
-        //         or we would've panicked
-        unsafe {
-            shmem_putmem(
-                shbox.as_mut_ptr() as *mut c_void,
-                data.as_ptr() as *const c_void,
-                size_of::<T>() * data.len(),
-                self.pe.0 as _,
-            );
-        }
+        shbox.put_many(0, data, self.pe, self.ctx);
     }
 
-    /// Alias to `read`.
-    pub fn get<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R) -> Box<[T]>
+    pub fn put_single<'shbox, T>(&self, shbox: &'shbox mut Shbox<'ctx, [T]>, idx: usize, data: &T)
     where
         'ctx: 'shbox,
-        T: Pod,
-        R: RangeBounds<usize> + Clone,
+        T: AnyBitPattern,
     {
-        self.read(shbox, range)
+        shbox.put_single(idx, data, self.pe, self.ctx);
+    }
+
+    /// Read the remote element of the Shbox.
+    pub fn get<'shbox, T>(&self, shbox: &'shbox Shbox<'ctx, T>) -> T
+    where
+        'ctx: 'shbox,
+        T: AnyBitPattern,
+    {
+        shbox.get(self.pe, self.ctx)
     }
 
     /// Reads a slice from the `Shbox` on another PE.
-    pub fn read<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R) -> Box<[T]>
+    pub fn get_many<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R) -> Box<[T]>
     where
         'ctx: 'shbox,
-        T: Pod,
+        T: AnyBitPattern,
         R: RangeBounds<usize> + Clone,
     {
-        let (start, end) = apply_range_bounds(range.clone(), shbox);
-        let buffer_size = end - start + 1;
-        let mut buffer: Box<[MaybeUninit<T>]> = Box::new_uninit_slice(buffer_size);
-        // SAFETY: shbox is on the symmetric heap since, well, it's a shbox.
-        //         we know buffer has enough capacity since we derived n_elems
-        //         from the range asked
-        unsafe {
-            shmem_getmem(
-                buffer.as_mut_ptr() as *mut c_void,
-                (shbox.as_ref() as *const [T] as *const T).offset(start as _) as *mut c_void,
-                buffer_size * size_of::<T>(),
-                self.pe.0 as _,
-            )
-        }
-        // SAFETY: T is Pod, and so any bit representation is a valid T.
-        //         Therefore, even if we read data unset by shmem_getmem,
-        //         we read valid T's.
-        unsafe { mem::transmute(buffer) }
+        shbox.get_many(self.pe, range, self.ctx)
+    }
+    
+    pub fn get_single<'shbox, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, idx: usize) -> T
+    where
+        'ctx: 'shbox,
+        T: AnyBitPattern,
+    {
+        shbox.get_single(self.pe, idx, self.ctx)
     }
 
-    /// Equivalent to `read`, but into a user-provided buffer instead
+    /// Equivalent to `get`, but into a user-provided buffer instead
     /// of allocating. Panics if the buffer is not large enough.
-    pub fn read_into<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R, into: &mut [T])
+    pub fn get_many_into<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R, into: &mut [T])
     where
         'ctx: 'shbox,
-        T: Pod,
+        T: AnyBitPattern,
         R: RangeBounds<usize> + Clone,
     {
-        let (start, end) = apply_range_bounds(range.clone(), shbox);
-        let buffer_size = end - start + 1;
-        assert!(
-            into.len() >= buffer_size,
-            "provided buffer was not large enough!"
-        );
-        // SAFETY: shbox is on the symmetric heap since, well, it's a shbox.
-        //         we know buffer has enough capacity by the assert
-        unsafe {
-            shmem_getmem(
-                into.as_mut_ptr() as *mut c_void,
-                (shbox.as_ref() as *const [T] as *const T).offset(start as _) as *mut c_void,
-                buffer_size * size_of::<T>(),
-                self.pe.0 as _,
-            )
-        }
+        shbox.get_many_into(self.pe, range, into, self.ctx);
     }
 
-    pub fn read_nbi<'shbox, R, T>(
+    pub fn get_nbi<'shbox, T>(&self, shbox: &'shbox Shbox<'shbox, T>) -> PendingNbiOp<'shbox, T>
+    where
+        T: AnyBitPattern,
+    {
+        shbox.get_nbi(self.pe)
+    }
+
+    pub fn get_many_nbi<'shbox, R, T>(
         &self,
         shbox: &'shbox Shbox<'ctx, [T]>,
         range: R,
     ) -> PendingNbiSliceOp<'shbox, T>
     where
         'ctx: 'shbox,
-        T: Pod,
+        T: AnyBitPattern,
         R: RangeBounds<usize> + Clone,
     {
-        let (start, end) = apply_range_bounds(range.clone(), shbox);
-        let buffer_size = end - start + 1;
-        // SAFETY: UnsafeCell<T> is transparent over T.
-        let buffer: Box<UnsafeCell<[MaybeUninit<T>]>> =
-            unsafe { transmute(Box::<[T]>::new_uninit_slice(buffer_size)) };
-        unsafe {
-            shmem_getmem_nbi(
-                buffer.get() as *mut c_void,
-                (shbox.as_ref() as *const [T] as *const T).offset(start as _) as *mut c_void,
-                buffer_size * size_of::<T>(),
-                self.pe.0 as _,
-            )
-        }
-        unsafe { nbi_slice_op(buffer) }
+        shbox.get_many_nbi(range, self.pe, self.ctx)
     }
 
     pub fn get_single_nbi<'shbox, T>(
         &self,
-        shbox: &Shbox<'shbox, [T]>,
+        shbox: &'shbox Shbox<'shbox, [T]>,
         idx: usize,
     ) -> PendingNbiOp<'shbox, T>
     where
-        T: Pod,
+        T: AnyBitPattern,
     {
-        assert!(
-            idx < shbox.len(),
-            "tried to idx out of bounds: len {}, idx {idx}",
-            shbox.len()
-        );
-        let buffer = Box::new(UnsafeCell::new(MaybeUninit::uninit()));
-        unsafe {
-            shmem_getmem_nbi(
-                buffer.get() as *mut c_void,
-                (shbox.as_ref() as *const [T] as *const T).offset(idx as _) as *mut c_void,
-                size_of::<T>(),
-                self.pe.0 as _,
-            )
-        }
-        unsafe { nbi_op(buffer) }
+        shbox.get_single_nbi(idx, self.pe, self.ctx)
     }
 }
 

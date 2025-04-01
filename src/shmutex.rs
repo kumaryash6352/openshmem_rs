@@ -38,6 +38,20 @@ impl<'ctx> Shmlock<'ctx> {
         unsafe { shmem_set_lock(self.0.raw_ptr() as *mut c_long) };
         ShmlockLock(self)
     }
+
+    /// Lock the `Shmlock` without constructing a `ShmlockLock`, bypassing RAII semantics.
+    /// 
+    /// SAFETY: The calling node must not already be holding the lock.
+    pub unsafe fn lock_raw(&self) {
+        shmem_set_lock(self.0.raw_ptr() as *mut c_long);
+    }
+
+    /// Unlock the `Shmlock` without dropping a `ShmlockLock`, bypassing RAII semantics.
+    /// 
+    /// SAFETY: The calling node must be holding the lock.
+    pub unsafe fn unlock_raw(&self) {
+        shmem_clear_lock(self.0.raw_ptr() as *mut c_long);
+    }
 }
 
 pub struct Shmutex<'ctx, T> {

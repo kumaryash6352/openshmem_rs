@@ -1,17 +1,26 @@
 use std::{
     alloc::{AllocError, Allocator, Layout},
+    cell::UnsafeCell,
     ffi::c_void,
     fmt::Debug,
-    mem::{self, MaybeUninit},
+    mem::{self, transmute, MaybeUninit},
     ops::{Deref, DerefMut, RangeBounds},
     ptr::NonNull,
 };
 
+use bytemuck::Zeroable;
 use openshmem_sys::shmem::{
-    shmem_align, shmem_calloc, shmem_free, shmem_putmem, shmem_realloc,
+    shmem_align, shmem_calloc, shmem_free, shmem_getmem, shmem_getmem_nbi, shmem_putmem,
+    shmem_putmem_nbi, shmem_realloc,
 };
 
-use crate::{atomics::{Atomic, AtomicFetch}, shmutex::Shmlock, ShmemCtx, PE};
+use crate::{
+    atomics::{Atomic, AtomicFetch},
+    nbi::{nbi_noout_op, PendingNbiOp, PendingNbiSliceOp, PendingNbiUnitOp},
+    nbi_op, nbi_slice_op,
+    shmutex::Shmlock,
+    ShmemCtx, PE,
+};
 
 /// The Shmallocator handles [de]allocations on the Symmetric Heap.
 /// Note that, as the `'ctx` lifetime indicates, the ShmemCtx must outlive the Shmallocator.
@@ -158,7 +167,6 @@ impl<'ctx, T: ?Sized> Shbox<'ctx, T> {
     /// Retrieve a reference to the underlying type.
     ///
     /// This is equivalent to `Deref::deref`'ing a `Shbox`.
-    #[cfg(not(feature = "lockshbox"))]
     pub fn raw(&self) -> &T {
         self.internal.as_ref()
     }
@@ -178,7 +186,258 @@ impl<'ctx, T: ?Sized> Shbox<'ctx, T> {
     }
 }
 
-#[cfg(not(feature = "lockshbox"))]
+impl<'ctx, T: ?Sized + Zeroable> Shbox<'ctx, T> {
+    pub fn put(&mut self, data: &T, pe: PE, _ctx: &ShmemCtx) {
+        unsafe {
+            shmem_putmem(
+                self.raw_ptr_mut() as *mut c_void,
+                data as *const T as *const c_void,
+                size_of::<T>(),
+                pe.0 as _,
+            );
+        }
+    }
+
+    /// Read the remote element of the Shbox.
+    pub fn get(&self, pe: PE, _ctx: &ShmemCtx) -> T {
+        let mut buffer = MaybeUninit::uninit();
+        unsafe {
+            shmem_getmem(
+                buffer.as_mut_ptr() as *mut c_void,
+                self.raw_ptr() as *const c_void,
+                size_of::<T>(),
+                pe.0 as _,
+            );
+        }
+        unsafe { buffer.assume_init() }
+    }
+
+    pub fn put_nbi<'s>(&'s mut self, data: &T, pe: PE) -> PendingNbiOp<'s, ()> {
+        let buffer = Box::new(UnsafeCell::new(MaybeUninit::new(())));
+        unsafe {
+            shmem_putmem_nbi(
+                self.raw_ptr_mut() as *mut c_void,
+                data as *const T as *const c_void,
+                size_of::<T>(),
+                pe.0 as _,
+            );
+        }
+        unsafe { nbi_op(buffer) }
+    }
+
+    pub fn get_nbi<'s>(&'s self, pe: PE) -> PendingNbiOp<'s, T> {
+        let buffer = Box::new(UnsafeCell::new(MaybeUninit::uninit()));
+        unsafe {
+            shmem_getmem_nbi(
+                buffer.get() as *mut c_void,
+                self.raw_ptr() as *const c_void,
+                size_of::<T>(),
+                pe.0 as _,
+            );
+        }
+        unsafe { nbi_op(buffer) }
+    }
+}
+
+impl<'ctx, T: Sized + Zeroable> Shbox<'ctx, [T]> {
+    /// Instantly replace the `offset..(offset + data.len())` elements of `shbox @ PE`
+    /// with the elements from `data`.
+    ///
+    /// # Panics
+    /// If `data.len() > shbox.len()`, panic.
+    pub fn put_many(&mut self, offset: usize, data: &[T], pe: PE, _ctx: &ShmemCtx) {
+        if data.len() + offset > self.len() {
+            panic!("tried to write more data into a shbox than would fit!");
+        }
+
+        // SAFETY: shbox is on the symmetric heap by construction
+        //         shbox has room for at laest data.len() elements,
+        //         or we would've panicked
+        unsafe {
+            shmem_putmem(
+                self.as_mut_ptr().offset(offset as _) as *mut c_void,
+                data.as_ptr() as *const c_void,
+                size_of::<T>() * data.len(),
+                pe.0 as _,
+            );
+        }
+    }
+
+    pub fn put_single(&mut self, idx: usize, data: &T, pe: PE, _ctx: &ShmemCtx) {
+        assert!(
+            idx < self.len(),
+            "tried to idx out of bounds: len {}, idx {idx}",
+            self.len()
+        );
+        unsafe {
+            shmem_putmem(
+                self.as_mut_ptr().offset(idx as _) as *mut c_void,
+                data as *const T as *const c_void,
+                size_of::<T>(),
+                pe.0 as _,
+            );
+        }
+    }
+
+    /// Reads a slice from the `Shbox` on another PE.
+    pub fn get_many<R>(&self, pe: PE, range: R, _ctx: &ShmemCtx) -> Box<[T]>
+    where
+        R: RangeBounds<usize> + Clone,
+    {
+        let (start, end) = apply_range_bounds(range.clone(), self.as_ref());
+        let buffer_size = end - start + 1;
+        let mut buffer: Box<[MaybeUninit<T>]> = Box::new_uninit_slice(buffer_size);
+        // SAFETY: shbox is on the symmetric heap since, well, it's a shbox.
+        //         we know buffer has enough capacity since we derived n_elems
+        //         from the range asked
+        unsafe {
+            shmem_getmem(
+                buffer.as_mut_ptr() as *mut c_void,
+                (self.as_ref() as *const [T] as *const T).offset(start as _) as *mut c_void,
+                buffer_size * size_of::<T>(),
+                pe.0 as _,
+            )
+        }
+        // SAFETY: T is Pod, and so any bit representation is a valid T.
+        //         Therefore, even if we read data unset by shmem_getmem,
+        //         we read valid T's.
+        unsafe { mem::transmute(buffer) }
+    }
+
+    pub fn get_single(&self, pe: PE, idx: usize, _ctx: &ShmemCtx) -> T {
+        assert!(
+            idx < self.len(),
+            "tried to idx out of bounds: len {}, idx {idx}",
+            self.len()
+        );
+        let mut buffer = MaybeUninit::uninit();
+        unsafe {
+            shmem_getmem(
+                buffer.as_mut_ptr() as *mut c_void,
+                (self.as_ref() as *const [T] as *const T).offset(idx as _) as *mut c_void,
+                size_of::<T>(),
+                pe.0 as _,
+            );
+        }
+        unsafe { buffer.assume_init() }
+    }
+
+    /// Equivalent to `get`, but into a user-provided buffer instead
+    /// of allocating. Panics if the buffer is not large enough.
+    pub fn get_many_into<R>(&self, pe: PE, range: R, into: &mut [T], _ctx: &ShmemCtx)
+    where
+        R: RangeBounds<usize> + Clone,
+    {
+        let (start, end) = apply_range_bounds(range.clone(), self.as_ref());
+        let buffer_size = end - start + 1;
+        assert!(
+            into.len() >= buffer_size,
+            "provided buffer was not large enough!"
+        );
+        // SAFETY: shbox is on the symmetric heap since, well, it's a shbox.
+        //         we know buffer has enough capacity by the assert
+        unsafe {
+            shmem_getmem(
+                into.as_mut_ptr() as *mut c_void,
+                (self.as_ref() as *const [T] as *const T).offset(start as _) as *mut c_void,
+                buffer_size * size_of::<T>(),
+                pe.0 as _,
+            )
+        }
+    }
+
+    pub fn get_many_nbi<'s, R>(
+        &'s self,
+        range: R,
+        pe: PE,
+        _ctx: &ShmemCtx,
+    ) -> PendingNbiSliceOp<'s, T>
+    where
+        R: RangeBounds<usize> + Clone,
+    {
+        let (start, end) = apply_range_bounds(range.clone(), self.as_ref());
+        let buffer_size = end - start + 1;
+        // SAFETY: UnsafeCell<T> is transparent over T.
+        let buffer: Box<UnsafeCell<[MaybeUninit<T>]>> =
+            unsafe { transmute(Box::<[T]>::new_uninit_slice(buffer_size)) };
+        unsafe {
+            shmem_getmem_nbi(
+                buffer.get() as *mut c_void,
+                (self.as_ref() as *const [T] as *const T).offset(start as _) as *mut c_void,
+                buffer_size * size_of::<T>(),
+                pe.0 as _,
+            )
+        }
+        unsafe { nbi_slice_op(buffer) }
+    }
+
+    pub fn get_single_nbi<'s>(
+        &'s self,
+        idx: usize,
+        pe: PE,
+        _ctx: &ShmemCtx,
+    ) -> PendingNbiOp<'s, T> {
+        assert!(
+            idx < self.len(),
+            "tried to idx out of bounds: len {}, idx {idx}",
+            self.len()
+        );
+        let buffer = Box::new(UnsafeCell::new(MaybeUninit::uninit()));
+        unsafe {
+            shmem_getmem_nbi(
+                buffer.get() as *mut c_void,
+                (self.as_ref() as *const [T] as *const T).offset(idx as _) as *mut c_void,
+                size_of::<T>(),
+                pe.0 as _,
+            )
+        }
+        unsafe { nbi_op(buffer) }
+    }
+
+    pub fn put_single_nbi<'s>(
+        &'s mut self,
+        idx: usize,
+        data: &'s T,
+        pe: PE,
+        _ctx: &ShmemCtx,
+    ) -> PendingNbiUnitOp<'s> {
+        assert!(
+            idx < self.len(),
+            "tried to idx out of bounds: len {}, idx {idx}",
+            self.len()
+        );
+        unsafe {
+            shmem_putmem_nbi(
+                (self.raw_ptr_mut() as *mut T).offset(idx as _) as *mut c_void,
+                data as *const T as *const c_void,
+                size_of::<T>(),
+                pe.0 as _
+            );
+        }
+        nbi_noout_op()
+    }
+
+    pub fn put_many_nbi<'s>(&'s mut self, offset: usize, data: &'s [T], pe: PE, _ctx: &ShmemCtx) -> PendingNbiUnitOp<'s> {
+        if data.len() + offset > self.len() {
+            panic!("tried to write more data into a shbox than would fit!");
+        }
+
+        // SAFETY: shbox is on the symmetric heap by construction
+        //         shbox has room for at laest data.len() elements,
+        //         or we would've panicked
+        unsafe {
+            shmem_putmem_nbi(
+                self.as_mut_ptr().offset(offset as _) as *mut c_void,
+                data.as_ptr() as *const c_void,
+                size_of::<T>() * data.len(),
+                pe.0 as _,
+            );
+        }
+
+        nbi_noout_op()
+    }
+}
+
 impl<'ctx, T: ?Sized> Deref for Shbox<'ctx, T> {
     type Target = T;
 
@@ -187,14 +446,12 @@ impl<'ctx, T: ?Sized> Deref for Shbox<'ctx, T> {
     }
 }
 
-#[cfg(not(feature = "lockshbox"))]
 impl<'ctx, T: ?Sized> DerefMut for Shbox<'ctx, T> {
     fn deref_mut(&mut self) -> &mut T {
         self.internal.deref_mut()
     }
 }
 
-#[cfg(not(feature = "lockshbox"))]
 impl<'ctx, T0: ?Sized + Debug> Debug for Shbox<'ctx, T0> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         <Box<T0, &'ctx Shmallocator<'ctx>> as Debug>::fmt(&self.internal, f)
@@ -229,9 +486,15 @@ pub(crate) fn apply_range_bounds<R: RangeBounds<usize>, T>(bounds: R, t: &[T]) -
         std::ops::Bound::Excluded(x) => *x + 1,
         std::ops::Bound::Unbounded => 0,
     };
-    if end > t.len() { panic!("end of range out of bounds: {end} > {}", t.len()); }
-    if start > t.len() { panic!("start of range out of bounds: {end} > {}", t.len()); }
-    if start > end { panic!("invalid range: start before end: {start}..{end}"); }
+    if end > t.len() {
+        panic!("end of range out of bounds: {end} > {}", t.len());
+    }
+    if start > t.len() {
+        panic!("start of range out of bounds: {end} > {}", t.len());
+    }
+    if start > end {
+        panic!("invalid range: start before end: {start}..{end}");
+    }
     (start, end)
 }
 
@@ -244,7 +507,8 @@ where
         let (start, end) = apply_range_bounds(self.range.clone(), &self.buf);
         unsafe {
             shmem_putmem(
-                (self.into.internal.as_ref() as *const [T] as *const T).offset(start as _) as *mut c_void,
+                (self.into.internal.as_ref() as *const [T] as *const T).offset(start as _)
+                    as *mut c_void,
                 self.buf.as_ptr() as *const c_void,
                 size_of::<T>() * (end - start + 1),
                 self.on.0 as _,

@@ -72,7 +72,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 RESOLUTION.1 / npes
             } * RESOLUTION.0;
 
-            let their_data = ctx.pe(pe).read(&rows, ..);
+            let their_data = ctx.pe(pe).get_many(&rows, ..);
             println!(
                 "[PE {my_pe}]: got {} elements from pe {pe}, writing...",
                 their_data.len()

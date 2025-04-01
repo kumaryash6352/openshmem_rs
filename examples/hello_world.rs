@@ -33,14 +33,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     #[cfg(not(feature = "rma"))]
     if my_pe == 0 {
-        let mut remote = ctx.pe(1).write(&mut shared, 4..8);
+        let mut remote = ctx.pe(1).put_view(&mut shared, 4..8);
         for i in &mut remote[0..4] {
             *i = 1.0;
         }
         // remote is dropped at the end of this scope,
         // copying its local buffer to the remote host.
     } else if my_pe == 1 {
-        let mut remote = ctx.pe(0).write(&mut shared, 0..4);
+        let mut remote = ctx.pe(0).put_view(&mut shared, 0..4);
         for i in &mut remote[0..4] {
             *i = 2.0;
         }

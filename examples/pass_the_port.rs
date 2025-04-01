@@ -32,7 +32,7 @@ fn main()
   // PE over.
   let mut remote =
     ctx.pe((my_pe + 1) % npes)
-       .write(&mut shared, 0..8);
+       .put_view(&mut shared, 0..8);
   for i in &mut remote[0..8] {
     *i = my_pe as _;
   }

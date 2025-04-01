@@ -3,6 +3,14 @@ use std::{cell::UnsafeCell, marker::PhantomData, mem::{self, transmute, MaybeUni
 use crate::impl_nbiop_tuple;
 
 /// The result of a non-blocking routine that
+/// may not yet have been completed, but does
+/// not produce any output.
+#[must_use = "will panic if dropped without being passed to `ShmemCtx::quiet`"]
+pub struct PendingNbiUnitOp<'shm> {
+    _ctx: PhantomData<&'shm ()>
+}
+
+/// The result of a non-blocking routine that
 /// may not yet have been completed.
 ///
 /// Use `ShmemCtx::quiet` to get the result.
@@ -54,6 +62,14 @@ impl<'shm, T> PendingNbiSliceOp<'shm, T> {
     }
 }
 
+impl<'shm> Drop for PendingNbiUnitOp<'shm> {
+    fn drop(&mut self) {
+        // unsafe { MUST_USE_QUIET_ON_NBI(); }
+        panic!("PendingOutputlessNbiOp MUST be passed to ShmemCtx::quiet!
+                You MUST NOT let this type be dropped!");
+    }
+}
+
 impl<'shm, T> Drop for PendingNbiOp<'shm, T> {
     fn drop(&mut self) {
         // unsafe { MUST_USE_QUIET_ON_NBI(); }
@@ -70,6 +86,11 @@ impl<'shm, T> Drop for PendingNbiSliceOp<'shm, T> {
     }
 }
 
+pub(crate) fn nbi_noout_op<'shm>() -> PendingNbiUnitOp<'shm> {
+    PendingNbiUnitOp {
+        _ctx: PhantomData::default()
+    }
+}
 pub(crate) unsafe fn nbi_op<'shm, T>(cell: Box<UnsafeCell<MaybeUninit<T>>>) -> PendingNbiOp<'shm, T> {
     PendingNbiOp { inner: cell, _ctx: PhantomData::default() }
 }
@@ -80,7 +101,7 @@ pub(crate) unsafe fn nbi_slice_op<'shm, T>(cell: Box<UnsafeCell<[MaybeUninit<T>]
 /// Common trait for PendingNbiOp and tuples
 /// of PendingNbiOp.
 ///
-/// Along with `PendingNbiOp`, this is also
+/// Along with `Pending[Slice]NbiOp`, this is also
 /// implemented for tuples and vecs of `NbiOp`,
 /// so you can finalize multiple operations in
 /// one quiet.
@@ -93,6 +114,14 @@ pub trait NbiOp {
     /// # Safety
     /// Must be called after a `shmem_quiet`.
     unsafe fn after_quiet(self) -> Self::Output;
+}
+
+impl NbiOp for PendingNbiUnitOp<'_> {
+    type Output = ();
+
+    unsafe fn after_quiet(self) -> Self::Output {
+        ()
+    }
 }
 
 impl<T> NbiOp for PendingNbiOp<'_, T> {
@@ -108,6 +137,14 @@ impl<T> NbiOp for PendingNbiSliceOp<'_, T> {
 
     unsafe fn after_quiet(self) -> Self::Output {
         self.into_inner()
+    }
+}
+
+impl NbiOp for Vec<PendingNbiUnitOp<'_>> {
+    type Output = ();
+
+    unsafe fn after_quiet(self) -> Self::Output {
+        ()
     }
 }
 

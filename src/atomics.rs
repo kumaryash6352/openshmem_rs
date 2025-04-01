@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use bytemuck::{AnyBitPattern, Pod};
+use bytemuck::{AnyBitPattern, Pod, Zeroable};
 
 // TODO: `FakeAtomic[32/64]`: uses associated int32/64 routines
 //                               to atomically edit a datatype.
@@ -10,6 +10,7 @@ use crate::{impl_atomic_bit, impl_atomic_fetch, impl_atomic_int, shmalloc::Shbox
 ///
 /// This version can only be accessed by an instantaneous read or write:
 /// see `Atomic::read()` or the assortment of `Atomic*` traits.
+#[derive(Zeroable)]
 pub struct Atomic<T: AtomicFetch>(T);
 
 /// Marker struct for a `ForceAtomicFetch` that's 32 bit.

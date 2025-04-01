@@ -62,7 +62,7 @@ fn sharray() -> Result<(), Box<dyn Error>> {
     assert!(!x.raw_ptr().is_null());
     assert!((x.raw_ptr() as *const usize).is_aligned());
     assert_eq!(x.iter().sum::<usize>(), (0..8).sum());
-    let mut view = ctx.pe(my_pe).write(&mut x, ..);
+    let mut view = ctx.pe(my_pe).put_view(&mut x, ..);
     view[0] = view[7];
     view.finish();
     assert_eq!(x.iter().sum::<usize>(), (0..8).sum::<usize>() + 6);
