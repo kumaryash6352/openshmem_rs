@@ -478,7 +478,7 @@ where
 pub(crate) fn apply_range_bounds<R: RangeBounds<usize>, T>(bounds: R, t: &[T]) -> (usize, usize) {
     let end = match bounds.end_bound() {
         std::ops::Bound::Included(x) => *x,
-        std::ops::Bound::Excluded(x) => *x - 1,
+        std::ops::Bound::Excluded(x) => x.saturating_sub(1),
         std::ops::Bound::Unbounded => t.len(),
     };
     let start = match bounds.start_bound() {

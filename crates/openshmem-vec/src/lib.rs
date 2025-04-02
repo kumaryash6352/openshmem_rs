@@ -78,7 +78,7 @@ impl<'ctx, T: Pod + Clone> Shvec<'ctx, T> {
     pub fn index_many(&self, idxs: &[usize]) -> Box<[T]> {
         let len = self.len.atomic_fetch_local(self.ctx);
         let mut buf = Box::new_uninit_slice(idxs.len());
-        for i in 0..len {
+        for i in 0..idxs.len() {
             if i >= len {
                 panic!("index in index_many out of bounds");
             }
@@ -117,10 +117,7 @@ impl<'ctx, T: Pod + Clone> Shvec<'ctx, T> {
             std::ops::Bound::Excluded(x) => *x + 1,
             std::ops::Bound::Unbounded => 0,
         };
-
-        if end > len {
-            panic!("range end {end} is out of bounds for length {len}")
-        }
+        let end = end.min(self.len());
 
         // SAFETY: we know start..end is initialized because len > end or we'd have panic'd
         unsafe { transmute(&self.buf[start..end]) }
@@ -138,10 +135,7 @@ impl<'ctx, T: Pod + Clone> Shvec<'ctx, T> {
             std::ops::Bound::Excluded(x) => *x + 1,
             std::ops::Bound::Unbounded => 0,
         };
-
-        if end > len {
-            panic!("range end {end} is out of bounds for remote length {len}")
-        }
+        let end = end.min(len);
 
         // SAFETY: we know start..end is initialized because len > end or we'd have panic'd
         unsafe { self.buf.get_many(pe, start..end, self.ctx).assume_init() }
@@ -272,6 +266,25 @@ impl<'ctx, T: Pod + Clone> Shvec<'ctx, T> {
             buf: self,
             _lock: self.lck[self.ctx.my_pe().raw() as usize].lock(),
         }
+    }
+
+    pub fn insert(&mut self, idx: usize, x: T) -> Result<(), WouldRealloc> {
+        // SAFETY: we borrow self mutably, so no other thread can have this lock
+        unsafe { self.lck[self.ctx.my_pe().raw() as usize].lock_raw(); }
+        let len = self.len.atomic_fetch_local(self.ctx);
+        if idx > len {
+            panic!("idx out of bounds for insert");
+        }
+        // if we have 0 unused slots left
+        if self.buf.len() < len + 1 {
+            return Err(WouldRealloc);
+        }
+        let src = idx..(self.buf.len() - 1);
+        self.buf.copy_within(src, idx + 1);
+        self.buf[idx] = MaybeUninit::new(x);
+        self.len.atomic_inc(self.ctx.my_pe(), self.ctx);
+
+        Ok(())
     }
 }
 

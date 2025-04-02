@@ -10,7 +10,7 @@ use crate::{impl_atomic_bit, impl_atomic_fetch, impl_atomic_int, shmalloc::Shbox
 ///
 /// This version can only be accessed by an instantaneous read or write:
 /// see `Atomic::read()` or the assortment of `Atomic*` traits.
-#[derive(Zeroable)]
+#[derive(Clone, Zeroable)]
 pub struct Atomic<T: AtomicFetch>(T);
 
 /// Marker struct for a `ForceAtomicFetch` that's 32 bit.

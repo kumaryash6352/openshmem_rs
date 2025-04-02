@@ -75,6 +75,12 @@ impl PartialEq<usize> for PE {
     }
 }
 
+impl PartialEq<PE> for PE {
+    fn eq(&self, other: &PE) -> bool {
+        self.0 == other.0
+    }
+}
+
 impl Display for PE {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
