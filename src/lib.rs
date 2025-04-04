@@ -12,8 +12,7 @@
 #![feature(allocator_api, set_ptr_value, ptr_as_ref_unchecked)]
 
 use crate::shmalloc::{apply_range_bounds, MutableArrayView, Shbox, Shmallocator};
-use bytemuck::AnyBitPattern;
-pub use bytemuck::Pod;
+pub use bytemuck::{Pod, AnyBitPattern, Zeroable};
 use nbi::{nbi_op, nbi_slice_op, NbiOp, PendingNbiOp, PendingNbiSliceOp};
 use std::{
     cell::UnsafeCell,
@@ -528,7 +527,7 @@ impl<'ctx> PEReference<'ctx> {
     ) -> MutableArrayView<'ctx, 'shbox, T, R>
     where
         'ctx: 'shbox,
-        T: AnyBitPattern,
+        T: Zeroable,
         R: RangeBounds<usize> + Clone,
     {
         let buffer_size = {
@@ -547,7 +546,7 @@ impl<'ctx> PEReference<'ctx> {
     pub fn put<'shbox, T>(&self, shbox: &'shbox mut Shbox<'ctx, T>, data: &T)
     where
         'ctx: 'shbox,
-        T: AnyBitPattern,
+        T: Zeroable,
     {
         shbox.put(data, self.pe, self.ctx)
     }
@@ -560,7 +559,7 @@ impl<'ctx> PEReference<'ctx> {
     pub fn put_many<'shbox, T>(&self, shbox: &'shbox mut Shbox<'ctx, [T]>, data: &[T])
     where
         'ctx: 'shbox,
-        T: AnyBitPattern,
+        T: Zeroable,
     {
         shbox.put_many(0, data, self.pe, self.ctx);
     }
@@ -568,7 +567,7 @@ impl<'ctx> PEReference<'ctx> {
     pub fn put_single<'shbox, T>(&self, shbox: &'shbox mut Shbox<'ctx, [T]>, idx: usize, data: &T)
     where
         'ctx: 'shbox,
-        T: AnyBitPattern,
+        T: Zeroable,
     {
         shbox.put_single(idx, data, self.pe, self.ctx);
     }
@@ -577,7 +576,7 @@ impl<'ctx> PEReference<'ctx> {
     pub fn get<'shbox, T>(&self, shbox: &'shbox Shbox<'ctx, T>) -> T
     where
         'ctx: 'shbox,
-        T: AnyBitPattern,
+        T: Zeroable,
     {
         shbox.get(self.pe, self.ctx)
     }
@@ -586,7 +585,7 @@ impl<'ctx> PEReference<'ctx> {
     pub fn get_many<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R) -> Box<[T]>
     where
         'ctx: 'shbox,
-        T: AnyBitPattern,
+        T: Zeroable,
         R: RangeBounds<usize> + Clone,
     {
         shbox.get_many(self.pe, range, self.ctx)
@@ -595,7 +594,7 @@ impl<'ctx> PEReference<'ctx> {
     pub fn get_single<'shbox, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, idx: usize) -> T
     where
         'ctx: 'shbox,
-        T: AnyBitPattern,
+        T: Zeroable,
     {
         shbox.get_single(self.pe, idx, self.ctx)
     }
@@ -605,7 +604,7 @@ impl<'ctx> PEReference<'ctx> {
     pub fn get_many_into<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R, into: &mut [T])
     where
         'ctx: 'shbox,
-        T: AnyBitPattern,
+        T: Zeroable,
         R: RangeBounds<usize> + Clone,
     {
         shbox.get_many_into(self.pe, range, into, self.ctx);
@@ -613,7 +612,7 @@ impl<'ctx> PEReference<'ctx> {
 
     pub fn get_nbi<'shbox, T>(&self, shbox: &'shbox Shbox<'shbox, T>) -> PendingNbiOp<'shbox, T>
     where
-        T: AnyBitPattern,
+        T: Zeroable,
     {
         shbox.get_nbi(self.pe)
     }
@@ -625,7 +624,7 @@ impl<'ctx> PEReference<'ctx> {
     ) -> PendingNbiSliceOp<'shbox, T>
     where
         'ctx: 'shbox,
-        T: AnyBitPattern,
+        T: Zeroable,
         R: RangeBounds<usize> + Clone,
     {
         shbox.get_many_nbi(range, self.pe, self.ctx)
@@ -637,7 +636,7 @@ impl<'ctx> PEReference<'ctx> {
         idx: usize,
     ) -> PendingNbiOp<'shbox, T>
     where
-        T: AnyBitPattern,
+        T: Zeroable,
     {
         shbox.get_single_nbi(idx, self.pe, self.ctx)
     }

@@ -1,13 +1,11 @@
 use std::{
-    mem::{self, MaybeUninit, swap, transmute},
+    ffi::c_void,
+    mem::{self, swap, transmute, MaybeUninit},
     ops::{Index, RangeBounds},
 };
 
 use openshmem_rs::{
-    PE, Pod, ShmemCtx,
-    atomics::Atomic,
-    shmalloc::{Shbox, Shmallocator},
-    shmutex::{Shmlock, ShmlockLock},
+    atomics::Atomic, ffi::{shmem_collectmem, SHMEM_TEAM_WORLD}, shmalloc::{Shbox, Shmallocator}, shmutex::{Shmlock, ShmlockLock}, AnyBitPattern, Pod, ShmemCtx, PE, Zeroable
 };
 
 /// Analogous to `Vec`, but on the Symmetric Heap.
@@ -16,7 +14,7 @@ use openshmem_rs::{
 ///
 /// MaybeUninit is not Pod, even if T is Pod.
 /// See this issue for more details: https://github.com/Lokathor/bytemuck/pull/160
-pub struct Shvec<'ctx, T: Pod + Clone> {
+pub struct Shvec<'ctx, T: Zeroable + Copy> {
     shm: &'ctx Shmallocator<'ctx>,
     ctx: &'ctx ShmemCtx,
     len: Shbox<'ctx, Atomic<usize>>,
@@ -27,7 +25,7 @@ pub struct Shvec<'ctx, T: Pod + Clone> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WouldRealloc;
 
-impl<'ctx, T: Pod + Clone> Shvec<'ctx, T> {
+impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
     pub fn new(
         ctx: &'ctx ShmemCtx,
         shm: &'ctx Shmallocator<'ctx>,
@@ -52,7 +50,7 @@ impl<'ctx, T: Pod + Clone> Shvec<'ctx, T> {
         let buf = (0..*items)
             .map(|i| {
                 buf.get(i)
-                    .copied()
+                    .cloned()
                     .map(MaybeUninit::new)
                     .unwrap_or(MaybeUninit::zeroed())
             })
@@ -270,7 +268,9 @@ impl<'ctx, T: Pod + Clone> Shvec<'ctx, T> {
 
     pub fn insert(&mut self, idx: usize, x: T) -> Result<(), WouldRealloc> {
         // SAFETY: we borrow self mutably, so no other thread can have this lock
-        unsafe { self.lck[self.ctx.my_pe().raw() as usize].lock_raw(); }
+        unsafe {
+            self.lck[self.ctx.my_pe().raw() as usize].lock_raw();
+        }
         let len = self.len.atomic_fetch_local(self.ctx);
         if idx > len {
             panic!("idx out of bounds for insert");
@@ -286,16 +286,59 @@ impl<'ctx, T: Pod + Clone> Shvec<'ctx, T> {
 
         Ok(())
     }
+
+    pub fn collect(&self) -> Box<[T]> {
+        let mut len = self.shm.shbox(self.len());
+        len.reduce_sum(self.ctx);
+        let mut buf: Box<[MaybeUninit<T>]> = Box::new_uninit_slice(*len);
+
+        unsafe {
+            shmem_collectmem(
+                SHMEM_TEAM_WORLD,
+                buf.as_mut_ptr() as *mut c_void,
+                self.buf.raw_ptr() as *const c_void,
+                size_of::<T>() * self.len(),
+            )
+        };
+        unsafe { buf.assume_init() }
+    }
+
+    pub fn shift(&mut self, fill_with: T, starting_from: usize, amt: isize) -> Result<(), WouldRealloc> {
+        if amt.is_positive() {
+            self.shift_right(fill_with, starting_from, amt as _)
+        } else {
+            todo!("left shift not yet implemented");
+        }
+    }
+
+    pub fn shift_right(&mut self, fill_with: T, starting_from: usize, amt: usize) -> Result<(), WouldRealloc> {
+        let len = self.len();
+        assert!(starting_from < len, "shift_right starting from out of bounds");
+        if len + amt >= self.buf.len() {
+            return Err(WouldRealloc);
+        }
+
+        let guard = self.lck[self.ctx.my_pe().raw()].lock();
+        // move all values after starting_from to the right
+        self.buf.copy_within(starting_from.., starting_from + amt);
+        // fill previous values with fill_with
+        self.buf[starting_from..(starting_from + amt)].fill(MaybeUninit::new(fill_with));
+        // adjust len
+        self.len.atomic_add(amt, self.ctx.my_pe(), self.ctx);
+        drop(guard);
+
+        Ok(())
+    }
 }
 
-pub struct ShvecIter<'vec, T: Pod> {
+pub struct ShvecIter<'vec, T: Zeroable + Copy> {
     len: usize,
     idx: usize,
     buf: &'vec Shvec<'vec, T>,
     _lock: ShmlockLock<'vec, 'vec>,
 }
 
-impl<'vec, T: Pod> Iterator for ShvecIter<'vec, T> {
+impl<'vec, T: Zeroable + Copy> Iterator for ShvecIter<'vec, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
