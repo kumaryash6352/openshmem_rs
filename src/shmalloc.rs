@@ -102,7 +102,9 @@ impl<'ctx> Shmallocator<'ctx> {
     ///
     /// Note that this type is technically unsound. I don't know how to fix that yet.
     pub fn array_default<T: Default>(&'ctx self, len: usize) -> Shbox<'ctx, [T]> {
-        let mut vec = Box::new_zeroed_slice_in(len, self);
+        let mut cap = self.shbox(len);
+        cap.reduce_max(self.ctx);
+        let mut vec = Box::new_zeroed_slice_in(*cap, self);
         vec.fill_with(|| MaybeUninit::new(T::default()));
         // SAFETY: The `fill_with` has initializaed all elements of vec.
         Shbox {
@@ -115,7 +117,9 @@ impl<'ctx> Shmallocator<'ctx> {
     ///
     /// Note that this type is technically unsound. I don't know how to fix that yet.
     pub fn array_gen<T>(&'ctx self, mut f: impl FnMut(usize) -> T, len: usize) -> Shbox<'ctx, [T]> {
-        let mut vec = Box::new_zeroed_slice_in(len, self);
+        let mut cap = self.shbox(len);
+        cap.reduce_max(self.ctx);
+        let mut vec = Box::new_zeroed_slice_in(*cap, self);
         for (idx, e) in vec.iter_mut().enumerate() {
             *e = MaybeUninit::new(f(idx));
         }
@@ -129,7 +133,9 @@ impl<'ctx> Shmallocator<'ctx> {
     ///
     /// Note that this type is technically unsound. I don't know how to fix that yet.
     pub fn array<T: Clone>(&'ctx self, t: T, len: usize) -> Shbox<'ctx, [T]> {
-        let mut vec = Box::new_zeroed_slice_in(len, self);
+        let mut cap = self.shbox(len);
+        cap.reduce_max(self.ctx);
+        let mut vec = Box::new_zeroed_slice_in(*cap, self);
         vec.fill_with(|| MaybeUninit::new(t.clone()));
         // SAFETY: The `fill_with` has initializaed all elements of vec.
         Shbox {

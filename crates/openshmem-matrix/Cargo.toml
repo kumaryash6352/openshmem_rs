@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 openshmem-rs = { path = "../../" }
 openshmem-vec = { path = "../openshmem-vec/" }
+
+[features]
+debug = []

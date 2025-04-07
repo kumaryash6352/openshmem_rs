@@ -1,11 +1,9 @@
 use std::{
-    ffi::c_void,
-    mem::{self, swap, transmute, MaybeUninit},
-    ops::{Index, RangeBounds},
+    ffi::c_void, fmt::Debug, mem::{self, transmute, MaybeUninit}, ops::RangeBounds
 };
 
 use openshmem_rs::{
-    atomics::Atomic, ffi::{shmem_collectmem, SHMEM_TEAM_WORLD}, shmalloc::{Shbox, Shmallocator}, shmutex::{Shmlock, ShmlockLock}, AnyBitPattern, Pod, ShmemCtx, PE, Zeroable
+    atomics::Atomic, ffi::{shmem_collectmem, SHMEM_TEAM_WORLD}, shmalloc::{Shbox, Shmallocator}, shmutex::{Shmlock, ShmlockLock}, ShmemCtx, PE, Zeroable
 };
 
 /// Analogous to `Vec`, but on the Symmetric Heap.
@@ -31,12 +29,14 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         shm: &'ctx Shmallocator<'ctx>,
         initial_capacity: usize,
     ) -> Self {
+        let mut cap = shm.shbox(initial_capacity);
+        cap.reduce_max(ctx);
         Self {
             ctx,
             shm,
             len: shm.shbox(Atomic::new(0)),
             lck: shm.array_gen(|_| shm.lock(), ctx.n_pes()),
-            buf: shm.array_gen(|_| MaybeUninit::uninit(), initial_capacity),
+            buf: shm.array_gen(|_| MaybeUninit::uninit(), *cap),
         }
     }
 
@@ -47,7 +47,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         let buf = iter.into_iter().collect::<Vec<_>>();
         let mut items = shm.shbox(buf.len());
         items.reduce_max(ctx);
-        let buf = (0..*items)
+        let init_buf = (0..*items)
             .map(|i| {
                 buf.get(i)
                     .cloned()
@@ -59,9 +59,26 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         Self {
             ctx,
             shm,
-            buf: shm.array_gen(|i| buf[i], buf.len()),
+            buf: shm.array_gen(|i| init_buf[i], init_buf.len()),
             lck: shm.array_gen(|_| shm.lock(), ctx.n_pes()),
-            len: shm.shbox(Atomic::new(*items)),
+            len: shm.shbox(Atomic::new(buf.len())),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        let mpe = self.ctx.my_pe();
+        let _guard = self.lck[mpe.raw()].lock();
+        self.len.atomic_set(0, mpe, self.ctx);
+    }
+
+    pub fn extend(&mut self, from: &[T]) -> Result<(), WouldRealloc> {
+        if self.buf.len() < self.len() + from.len() {
+            Err(WouldRealloc)
+        } else {
+            let len = self.len();
+            // SAFETY: MaybeUninit<T> and T are byte-equal and have the same alignment.
+            self.buf[len..(len + from.len())].copy_from_slice(unsafe { transmute(from) });
+            Ok(())
         }
     }
 
@@ -115,7 +132,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
             std::ops::Bound::Excluded(x) => *x + 1,
             std::ops::Bound::Unbounded => 0,
         };
-        let end = end.min(self.len());
+        let end = end.min(len);
 
         // SAFETY: we know start..end is initialized because len > end or we'd have panic'd
         unsafe { transmute(&self.buf[start..end]) }
@@ -135,14 +152,20 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         };
         let end = end.min(len);
 
-        // SAFETY: we know start..end is initialized because len > end or we'd have panic'd
-        unsafe { self.buf.get_many(pe, start..end, self.ctx).assume_init() }
+        if end == 0 && start == 0 {
+            Box::new([])
+        } else {
+            // SAFETY: we know start..end is initialized because len > end or we'd have panic'd
+            unsafe { self.buf.get_many(pe, start..end, self.ctx).assume_init() }
+        }
     }
 
     pub fn replace(&mut self, idx: usize, x: T) {
         assert!(
             self.len.atomic_fetch_local(self.ctx) > idx,
-            "tried to replace out of bounds"
+            "tried to replace out of bounds (len = {}, idx = {})",
+            self.len(),
+            idx
         );
         self.buf[idx] = MaybeUninit::new(x);
     }
@@ -283,6 +306,9 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         self.buf.copy_within(src, idx + 1);
         self.buf[idx] = MaybeUninit::new(x);
         self.len.atomic_inc(self.ctx.my_pe(), self.ctx);
+        unsafe {
+            self.lck[self.ctx.my_pe().raw() as usize].unlock_raw();
+        }
 
         Ok(())
     }

@@ -10,7 +10,8 @@ repository = "https://github.com/kumaryash6352/openshmem-rs"
 [workspace]
 members = [
     "crates/openshmem-matrix",
-    "crates/openshmem-vec"
+    "crates/openshmem-vec",
+    "bench/graphsearch"
 ]
 
 
@@ -29,7 +30,7 @@ ctor = "0.2.8"
 [dependencies]
 bytemuck = { version = "1.19", features = ["derive", "zeroable_maybe_uninit"] }
 lazy_static = "1.5"
-openshmem-sys = "1.5"
+openshmem-sys = { path = "./openshmem-sys" }
 paste = "1.0"
 rand = "0.8.5"
 thiserror = "1.0"

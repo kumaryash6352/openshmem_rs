@@ -1,0 +1,11 @@
+[package]
+name = "bfs-graph-search"
+version = "0.0.1"
+authors = [ "Yash Kumar <tyushk+git@gmail.com>" ]
+edition = "2021"
+
+[dependencies]
+openshmem-rs = { path = "../../" }
+openshmem-vec = { path = "../../crates/openshmem-vec" }
+openshmem-matrix = { path = "../../crates/openshmem-matrix" }
+rayon = "1.10.0"
