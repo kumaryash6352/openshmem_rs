@@ -76,38 +76,60 @@ impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
         row % self.pes == self.mpe
     }
 
-    pub fn cols_on_row(&self, row: usize) -> Option<&[usize]> {
-        if row >= self.rows {
-            panic!("given row out of boudns")
+    pub fn cols_on_row_remote(&self, row: usize) -> Box<[usize]> {
+        if row >= self.rows { panic!("given row out of bounds"); }
+        let (_idx, remote_pe) = self.global_row_to_pe_row(row).unwrap();
+        if self.row_ptrs.get_single(remote_pe, row, self.ctx) == usize::MAX {
+            Box::new([])
         } else {
-            let bounds = self.row_to_col_idxs_range(row);
-            let start = bounds.0?;
-            if let Some(e) = bounds.1 {
-                Some(self.col_idxs.span(start..e))
+            let ridxs = self.row_ptrs.get_many(remote_pe, row.., self.ctx);
+            let end = ridxs.iter().filter(|x| **x != usize::MAX).next();
+            if let Some(end) = end {
+                self.col_idxs.span_remote(ridxs[0]..*end, remote_pe)
             } else {
-                Some(self.col_idxs.span(start..))
+                self.col_idxs.span_remote(ridxs[0].., remote_pe)
             }
         }
     }
 
-    pub fn nnz_on_row(&self, row: usize) -> Option<&[T]> {
+    pub fn cols_on_row(&self, row: usize) -> Result<&[usize], RowOnDifferentPe> {
         if row >= self.rows {
             panic!("given row out of boudns")
         } else {
-            let bounds = self.row_to_col_idxs_range(row);
-            let start = bounds.0?;
+            let bounds = self.row_to_col_idxs_range(row)?;
+            let Some(start) = bounds.0 else {
+                return Ok(&[])
+            };
             if let Some(e) = bounds.1 {
-                Some(self.xs.span(start..e))
+                Ok(self.col_idxs.span(start..e))
             } else {
-                Some(self.xs.span(start..))
+                Ok(self.col_idxs.span(start..))
             }
         }
     }
 
-    fn row_to_col_idxs_range(&self, row: usize) -> (Option<usize>, Option<usize>) {
+    pub fn nnz_on_row(&self, row: usize) -> Result<&[T], RowOnDifferentPe> {
         if row >= self.rows {
             panic!("given row out of boudns")
         } else {
+            let bounds = self.row_to_col_idxs_range(row)?;
+            let Some(start) = bounds.0 else {
+                return Ok(&[])
+            };
+            if let Some(e) = bounds.1 {
+                Ok(self.xs.span(start..e))
+            } else {
+                Ok(self.xs.span(start..))
+            }
+        }
+    }
+
+    fn row_to_col_idxs_range(&self, row: usize) -> Result<(Option<usize>, Option<usize>), RowOnDifferentPe> {
+        if row >= self.rows {
+            panic!("given row out of boudns")
+        } else {
+            let (_, pe) = self.global_row_to_pe_row(row).unwrap();
+            if pe != self.mpe { return Err(RowOnDifferentPe) }
             let start = self.row_ptrs.get(row).filter(|x| **x != usize::MAX).copied();
             let end = self
                 .row_ptrs
@@ -116,7 +138,7 @@ impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
                 .filter(|x| **x != usize::MAX)
                 .next()
                 .copied();
-            (start, end)
+            Ok((start, end))
         }
     }
 
@@ -136,7 +158,7 @@ impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
         );
         let (row_idx, target_pe) = self.global_row_to_pe_row(row).unwrap();
         if target_pe == self.mpe {
-            let (mstart, mend) = self.row_to_col_idxs_range(row);
+            let (mstart, mend) = self.row_to_col_idxs_range(row).unwrap();
             dprintln!("[PE {:>2}] put: mstart, mend = {mstart:?}, {mend:?}", self.ctx.my_pe());
             if let Some(start) = mstart {
                 // row is not empty

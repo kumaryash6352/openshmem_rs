@@ -4,7 +4,7 @@ use std::{
     ffi::c_void,
     fmt::Debug,
     mem::{self, transmute, MaybeUninit},
-    ops::{Deref, DerefMut, RangeBounds},
+    ops::{Bound, Deref, DerefMut, RangeBounds},
     ptr::NonNull,
 };
 
@@ -190,6 +190,11 @@ impl<'ctx, T: ?Sized> Shbox<'ctx, T> {
     pub fn raw_ptr_mut(&mut self) -> *mut T {
         self.internal.as_mut() as _
     }
+
+    // pub fn drop_take(self, _ctx: &ShmemCtx) -> Box<T> {
+    //     let size = size_of_val(self.internal.as_ref());
+    //     self.
+    // }
 }
 
 impl<'ctx, T: ?Sized + Zeroable> Shbox<'ctx, T> {
@@ -243,6 +248,7 @@ impl<'ctx, T: ?Sized + Zeroable> Shbox<'ctx, T> {
         }
         unsafe { nbi_op(buffer) }
     }
+
 }
 
 impl<'ctx, T: Sized + Zeroable> Shbox<'ctx, [T]> {
@@ -481,26 +487,47 @@ where
     pub(crate) buf: Box<[T]>,
 }
 
-pub(crate) fn apply_range_bounds<R: RangeBounds<usize>, T>(bounds: R, t: &[T]) -> (usize, usize) {
-    let end = match bounds.end_bound() {
-        std::ops::Bound::Included(x) => *x,
-        std::ops::Bound::Excluded(x) => x.saturating_sub(1),
-        std::ops::Bound::Unbounded => t.len(),
-    };
+// pub(crate) fn apply_range_bounds<R: RangeBounds<usize>, T>(bounds: R, t: &[T]) -> (usize, usize) {
+//     let end = match bounds.end_bound() {
+//         std::ops::Bound::Included(x) => *x,
+//         std::ops::Bound::Excluded(x) => x.saturating_sub(1),
+//         std::ops::Bound::Unbounded => t.len(),
+//     };
+//     let start = match bounds.start_bound() {
+//         std::ops::Bound::Included(x) => *x,
+//         std::ops::Bound::Excluded(x) => *x + 1,
+//         std::ops::Bound::Unbounded => 0,
+//     };
+//     if end > t.len() {
+//         panic!("end of range out of bounds: {end} > {}", t.len());
+//     }
+//     if start > t.len() {
+//         panic!("start of range out of bounds: {end} > {}", t.len());
+//     }
+//     if start > end {
+//         panic!("invalid range: start before end: {start}..{end}");
+//     }
+//     (start, end)
+// }
+
+pub fn apply_range_bounds<R: RangeBounds<usize>, T>(bounds: R, t: &[T]) -> (usize, usize) {
+    let len = t.len();
     let start = match bounds.start_bound() {
-        std::ops::Bound::Included(x) => *x,
-        std::ops::Bound::Excluded(x) => *x + 1,
-        std::ops::Bound::Unbounded => 0,
+        Bound::Included(&s) => s,
+        Bound::Excluded(&s) => s.saturating_add(1),
+        Bound::Unbounded => 0,
     };
-    if end > t.len() {
-        panic!("end of range out of bounds: {end} > {}", t.len());
-    }
-    if start > t.len() {
-        panic!("start of range out of bounds: {end} > {}", t.len());
-    }
-    if start > end {
-        panic!("invalid range: start before end: {start}..{end}");
-    }
+
+    // Determine the end index based on the upper bound.
+    let end = match bounds.end_bound() {
+        Bound::Included(&e) => e.saturating_add(1),
+        Bound::Excluded(&e) => e,
+        Bound::Unbounded => len,
+    };
+
+    let end = end.min(len);
+    let start = start.min(end);
+
     (start, end)
 }
 

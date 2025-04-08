@@ -138,7 +138,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         unsafe { transmute(&self.buf[start..end]) }
     }
 
-    pub fn span_remote(&self, range: impl RangeBounds<usize>, pe: PE) -> Box<[T]> {
+    pub fn span_remote(&self, range: impl RangeBounds<usize> + Clone, pe: PE) -> Box<[T]> {
         let len = self.len.atomic_fetch(pe, self.ctx);
         let end = match range.end_bound() {
             std::ops::Bound::Included(x) => *x + 1,
@@ -156,7 +156,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
             Box::new([])
         } else {
             // SAFETY: we know start..end is initialized because len > end or we'd have panic'd
-            unsafe { self.buf.get_many(pe, start..end, self.ctx).assume_init() }
+            unsafe { self.buf.get_many(pe, range, self.ctx).assume_init() }
         }
     }
 
@@ -316,7 +316,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
     pub fn collect(&self) -> Box<[T]> {
         let mut len = self.shm.shbox(self.len());
         len.reduce_sum(self.ctx);
-        let mut buf: Box<[MaybeUninit<T>]> = Box::new_uninit_slice(*len);
+        let mut buf = self.shm.array_gen::<MaybeUninit<T>>(|_| MaybeUninit::uninit(), *len);
 
         unsafe {
             shmem_collectmem(
@@ -326,7 +326,9 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
                 size_of::<T>() * self.len(),
             )
         };
-        unsafe { buf.assume_init() }
+        let mut local = Box::new_uninit_slice(*len);
+        local.copy_from_slice(&buf[..]);
+        unsafe { local.assume_init() }
     }
 
     pub fn shift(&mut self, fill_with: T, starting_from: usize, amt: isize) -> Result<(), WouldRealloc> {
