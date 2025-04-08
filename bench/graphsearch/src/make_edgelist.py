@@ -7,13 +7,10 @@ from typing import Iterable, Tuple, List
 
 random.seed("seedforreproducability")
 
-nodes = 256
-n_searches = 6
-max_path_len = 16
-# nodes = 16384
+nodes = 16384
+n_searches = 256
+max_path_len = 128
 n_edges = ceil(pow(nodes, 2) / 4) # about 1/4th of nodes have a
-# n_searches = 5000
-# max_path_len = 256
 
 print(f"generating {n_edges} edges...")
 edges = [(rand(0, nodes - 1), rand(0, nodes - 1)) for _ in range(n_edges)]

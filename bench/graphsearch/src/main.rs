@@ -82,21 +82,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     let searches = Shvec::from_iter(&ctx, &shm, searches.into_iter());
     let all_searches = searches.collect();
     let mut distances = Vec::new();
-    println!("{:?}", all_searches);
-
     for (from, to) in all_searches {
         distances.push(bfs(from, to, &adj, &ctx, &shm));
     }
 
-    println!("max distance: {}", distances.iter().max().unwrap());
-    println!("min distance: {}", distances.iter().min().unwrap());
-    println!("avg distance: {}", distances.iter().sum::<usize>() as f32 / distances.len() as f32);
+    if mype == 0 {
+        println!("max distance: {}", distances.iter().max().unwrap());
+        println!("min distance: {}", distances.iter().min().unwrap());
+        println!(
+            "avg distance: {}",
+            distances.iter().sum::<usize>() as f32 / distances.len() as f32
+        );
+    }
 
     drop(searches);
 
     Ok(())
 }
-
 fn bfs(
     from: usize,
     to: usize,
@@ -105,40 +107,18 @@ fn bfs(
     shm: &Shmallocator<'_>,
 ) -> usize {
     let mpe = ctx.my_pe().raw();
-    // fn bfs_p(
-    //     from: usize,
-    //     to: usize,
-    //     adj: &CrsMatrix<'_, u8>,
-    //     npes: usize,
-    //     ctx: &ShmemCtx,
-    //     n_conns_buf: &mut Shbox<'_, usize>,
-    //     conns_buf: &mut Shvec<'_, usize>,
-    //     path: &mut Vec<usize>,
-    // ) {
-    //     conns_buf.clear();
-    //     if adj.row_on_this_pe(from) {
-    //         // my job to fill conns_buf
-    //         let tos = adj.cols_on_row(from).expect("all paths must be findable");
-    //         conns_buf.extend(tos);
-    //     } else {
-    //         conns_buf.grow_to(0); // let the ndoe with the cols figure out length
-    //     }
-    //     ctx.barrier_all();
-
-    //     conns_buf.collect();
-
-    // }
     // strategy: remote read all elements from connects to
     //           we recurse into all connected nodes where idx % n_pes == mpe
     //           at each step, if a node has found the element we want, we send the signal.
     //           if the signal, we exit and that node shares the path with all others
     let conn_buf = if adj.row_on_this_pe(from) {
-        let conns = adj.cols_on_row(from).expect("all paths are findable");
-        Shvec::from_iter(ctx, shm, conns.into_iter().copied())
+        let conns = adj.cols_on_row(from);
+        Shvec::from_iter(ctx, shm, conns.as_ref().into_iter().copied())
     } else {
         Shvec::from_iter(ctx, shm, [])
     };
     let first_conns = conn_buf.collect();
+    // println!("pe {}: first_conns = {first_conns:?}", mpe);
     let mut len = shm.shbox(0);
     // divide work
     let my_targets = (*first_conns)
@@ -149,9 +129,18 @@ fn bfs(
         .collect::<Vec<_>>();
     let mut q = my_targets;
     let mut flag = shm.shbox(0);
-    bfs_p(ctx, shm, &adj, to, &mut q, &mut flag, 0);
+    // println!("pe {}: start search for {to}...", ctx.my_pe().raw());
+    if mpe == 0 {
+        // TODO: update progress
+        // println!("start search for {to}");
+    }
+    *len = bfs_p(ctx, shm, &adj, to, &mut q, &mut flag, 1);
+    ctx.barrier_all();
+    if mpe == 0 {
+        // println!("found {from}..[{} nodes]..to", *len - 1);
+    }
 
-    len.reduce_max(ctx);
+    len.reduce_min(ctx);
     *len
 }
 
@@ -165,26 +154,35 @@ fn bfs_p(
     layers: usize,
 ) -> usize {
     if q.contains(&target) {
-        println!("halting: i found a path in {layers}");
+        // println!(
+        //     "halting: i (pe {}) found a path in {layers}",
+        //     ctx.my_pe().raw()
+        // );
         **flag = ctx.my_pe().raw();
-        flag.reduce_max(ctx);
+    }
+    //println!("pe {}: waiting on flag max...", ctx.my_pe().raw());
+    ctx.barrier_all();
+    flag.reduce_max(ctx);
+    if **flag > 0 {
+        // println!("halting: pe {} found a path", **flag);
         layers
     } else {
-        flag.reduce_max(ctx);
-        if **flag > 0 {
-            println!("halting: pe {} found a path", **flag);
-            layers
-        } else {
-            // prepare new queue
-            let next_targets = q.iter().map(|idx| {
-                adj.cols_on_row_remote(*idx)
-            }).collect::<Vec<_>>();
-            q.clear();
-            for t in next_targets {
-                q.extend_from_slice(&t);
-            }
-            bfs_p(ctx, shm, adj, target, q, flag, layers + 1)
+        // println!(
+        //     "pe {}: no pe has found target yet. recursing, q = {q:?}",
+        //     ctx.my_pe().raw()
+        // );
+        // prepare new queue
+        let next_targets = q
+            .iter()
+            .map(|idx| adj.cols_on_row(*idx))
+            .collect::<Vec<_>>();
+        q.clear();
+        for t in next_targets {
+            q.extend_from_slice(&t);
         }
+        q.sort_unstable();
+        q.dedup();
+        bfs_p(ctx, shm, adj, target, q, flag, layers + 1)
     }
 }
 

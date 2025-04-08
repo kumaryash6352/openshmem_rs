@@ -297,7 +297,7 @@ impl<'ctx, T: Sized + Zeroable> Shbox<'ctx, [T]> {
         R: RangeBounds<usize> + Clone,
     {
         let (start, end) = apply_range_bounds(range.clone(), self.as_ref());
-        let buffer_size = end - start + 1;
+        let buffer_size = end - start;
         let mut buffer: Box<[MaybeUninit<T>]> = Box::new_uninit_slice(buffer_size);
         // SAFETY: shbox is on the symmetric heap since, well, it's a shbox.
         //         we know buffer has enough capacity since we derived n_elems
@@ -341,7 +341,7 @@ impl<'ctx, T: Sized + Zeroable> Shbox<'ctx, [T]> {
         R: RangeBounds<usize> + Clone,
     {
         let (start, end) = apply_range_bounds(range.clone(), self.as_ref());
-        let buffer_size = end - start + 1;
+        let buffer_size = end - start;
         assert!(
             into.len() >= buffer_size,
             "provided buffer was not large enough!"
@@ -368,7 +368,7 @@ impl<'ctx, T: Sized + Zeroable> Shbox<'ctx, [T]> {
         R: RangeBounds<usize> + Clone,
     {
         let (start, end) = apply_range_bounds(range.clone(), self.as_ref());
-        let buffer_size = end - start + 1;
+        let buffer_size = end - start;
         // SAFETY: UnsafeCell<T> is transparent over T.
         let buffer: Box<UnsafeCell<[MaybeUninit<T>]>> =
             unsafe { transmute(Box::<[T]>::new_uninit_slice(buffer_size)) };

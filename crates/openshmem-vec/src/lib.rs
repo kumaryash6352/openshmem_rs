@@ -56,13 +56,15 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
             })
             .collect::<Vec<_>>();
 
-        Self {
+        let r = Self {
             ctx,
             shm,
             buf: shm.array_gen(|i| init_buf[i], init_buf.len()),
             lck: shm.array_gen(|_| shm.lock(), ctx.n_pes()),
             len: shm.shbox(Atomic::new(buf.len())),
-        }
+        };
+        assert!(r.len() == buf.len());
+        r
     }
 
     pub fn clear(&mut self) {
@@ -152,11 +154,11 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         };
         let end = end.min(len);
 
-        if end == 0 && start == 0 {
+        if end == start {
             Box::new([])
         } else {
             // SAFETY: we know start..end is initialized because len > end or we'd have panic'd
-            unsafe { self.buf.get_many(pe, range, self.ctx).assume_init() }
+            unsafe { self.buf.get_many(pe, start..end, self.ctx).assume_init() }
         }
     }
 

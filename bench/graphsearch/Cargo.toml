@@ -7,5 +7,5 @@ edition = "2021"
 [dependencies]
 openshmem-rs = { path = "../../" }
 openshmem-vec = { path = "../../crates/openshmem-vec" }
-openshmem-matrix = { path = "../../crates/openshmem-matrix" }
+openshmem-matrix = { path = "../../crates/openshmem-matrix", features = [] }
 rayon = "1.10.0"
