@@ -203,50 +203,141 @@ impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
         }
     }
 
-    pub fn put_from_coo_all(&mut self, xs: &[(usize, usize, T)]) -> Result<(), RowOnDifferentPe> {
-        let mut rows = HashMap::new();
-        for (row, col, t) in xs {
-            let (row_idx, pe) = self.global_row_to_pe_row(*row);
-            if pe != self.mpe {
-                return Err(RowOnDifferentPe);
-            };
-            rows.entry(row_idx)
-                .or_insert_with(|| {
-                    self.cols_on_row(*row)
-                        .iter()
-                        .copied()
-                        .zip(self.xs_on_row(*row).iter().copied())
-                        .collect::<Vec<_>>()
-                })
-                .push((*col, t.clone()));
+    pub fn from_coo(
+        rows: usize,
+        cols: usize,
+        xs: &[(usize, usize, T)],
+        ctx: &'ctx ShmemCtx,
+        shm: &'ctx openshmem_rs::shmalloc::Shmallocator<'ctx>,
+    ) -> Self {
+        let npes = ctx.n_pes();
+        let mpe = ctx.my_pe().raw();
+        let to_pe = |row| row % npes;
+        // step 1: get data to respective PEs
+        let avg_cap = xs.len().div_ceil(npes);
+        let mut outboxes = (0..ctx.n_pes())
+            .map(|_| Vec::with_capacity(avg_cap))
+            .collect::<Vec<_>>();
+        for (row, col, x) in xs {
+            let remote_pe = to_pe(*row);
+            outboxes[remote_pe].push((*row, *col, *x));
         }
-
-        let min_cap = xs.len() + self.xs.capacity();
-        self.xs.grow_to(min_cap);
-        self.col_idxs.grow_to(min_cap);
-
-        for (row_idx, row_data) in rows {
-            for (col, t) in row_data {
-                let start = self.row_ptrs[row_idx];
-                let end = self.row_ptrs[row_idx + 1];
-                match self.col_idxs.span(start..end).binary_search(&col) {
-                    Ok(replace_at) => self.xs.replace(start + replace_at, t),
-                    Err(insert_at) => {
-                        self.xs
-                            .insert(start + insert_at, t.clone())
-                            .expect("we allocated enough earlier");
-                        self.col_idxs
-                            .insert(start + insert_at, col)
-                            .expect("we allocated enough earlier");
-                        self.row_ptrs[(row_idx + 1)..]
-                            .iter_mut()
-                            .for_each(|r| *r += 1);
-                    }
+        let mut my_incoming = Vec::new();
+        //dprintln!("[PE {:>2}] outboxes: {outboxes:?}", self.ctx.my_pe(),);
+        for pe in 0..npes {
+            let outgoing = Shvec::from_iter(ctx, shm, outboxes[pe].iter().copied());
+            dprintln!(
+                "[PE {:>2}] sending to pe {pe}: {:?}",
+                self.ctx.my_pe(),
+                &outgoing.span(..)
+            );
+            if pe == mpe {
+                for rpe in 0..npes {
+                    let mut remote = outgoing.span_remote(.., PE(rpe as _));
+                    dprintln!("[PE {:>2}] took {remote:?} from pe {rpe}", self.ctx.my_pe());
+                    my_incoming.extend_from_slice(remote.as_mut());
                 }
             }
+            ctx.barrier_all();
         }
-        Ok(())
+        // now, my_incoming has every value we care about
+        // sort by "insertion" order
+        my_incoming.sort_by_cached_key(|(r, c, _x)| r * rows + c);
+        // eliminate collisions
+        // TODO: doc that if for coords x, y there are more than one (x, y, c) in xs, c can be any one given
+        my_incoming.dedup_by_key(|(r, c, _x)| *r * rows + *c);
+
+        // now, my_incoming is optimized for insertion order
+        // split to SoA
+        let (irows, (icols, ixs)): (Vec<usize>, (Vec<usize>, Vec<T>)) =
+            my_incoming.into_iter().map(|(r, c, x)| (r, (c, x))).unzip();
+        assert!(irows.len() == icols.len()); // let the compiler know we can be aggro with unrolling
+        assert!(icols.len() == ixs.len());
+
+        // col_idxs and xs are actually fine as-is since we sorted them
+        let xs = Shvec::from_iter(ctx, shm, ixs);
+        let col_idxs = Shvec::from_iter(ctx, shm, icols);
+
+        // row_idxs is the complicated part
+        let rows_per_pe = rows.div_ceil(ctx.n_pes());
+        let mut row_ptrs = shm.array_default(rows_per_pe + 1);
+
+        let mut current_row = row_ptrs[0];
+        for (k, row) in irows.into_iter().enumerate() {
+            let row = row / npes;
+            while current_row < row {
+                current_row += 1;
+                row_ptrs[current_row] = k;
+            }
+        }
+
+        Self {
+            rows,
+            cols,
+            pes: ctx.n_pes(),
+            rows_per_pe,
+            mpe,
+            ctx,
+            shm,
+            col_idxs,
+            xs,
+            row_ptrs,
+        }
     }
+
+    // pub fn put_from_coo_all(&mut self, xs: &[(usize, usize, T)]) -> Result<(), RowOnDifferentPe> {
+    //     let mut rows = HashMap::new();
+    //     for (row, col, t) in xs {
+    //         let (row_idx, pe) = self.global_row_to_pe_row(*row);
+    //         if pe != self.mpe {
+    //             return Err(RowOnDifferentPe);
+    //         };
+    //         rows.entry(row_idx)
+    //             .or_insert_with(|| {
+    //                 self.cols_on_row(*row)
+    //                     .iter()
+    //                     .copied()
+    //                     .zip(self.xs_on_row(*row).iter().copied())
+    //                     .collect::<Vec<_>>()
+    //             })
+    //             .push((*col, t.clone()));
+    //     }
+
+    //     rows.values_mut().for_each(|vs| vs.sort_unstable_by_key(|(c, _x)| *c));
+    //     rows.values_mut().for_each(|vs| vs.dedup_by_key(|(c, _x)| *c));
+
+    //     let min_cap = xs.len() + self.xs.capacity();
+    //     self.xs.grow_to(min_cap);
+    //     self.col_idxs.grow_to(min_cap);
+
+    //     for (row_idx, row_data) in rows {
+    //         let shift_amt = row_data.len();
+    //         let o_start = self.row_ptrs[row_idx];
+    //         let o_end = self.row_ptrs[row_idx + 1];
+    //         let o_len = o_end - o_start;
+    //         let n_end = o_start + shift_amt;
+    //         self.xs.shift_right(, o_end, shift_amt);
+    //         // first, shift all elements in col_idxs, etc. foward
+
+    //         // for (col, t) in row_data {
+    //         //     match self.col_idxs.span(start..end).binary_search(&col) {
+    //         //         Ok(replace_at) => self.xs.replace(start + replace_at, t),
+    //         //         Err(insert_at) => {
+    //         //             self.xs
+    //         //                 .insert(start + insert_at, t.clone())
+    //         //                 .expect("we allocated enough earlier");
+    //         //             self.col_idxs
+    //         //                 .insert(start + insert_at, col)
+    //         //                 .expect("we allocated enough earlier");
+    //         //             self.row_ptrs[(row_idx + 1)..]
+    //         //                 .iter_mut()
+    //         //                 .for_each(|r| *r += 1);
+    //         //         }
+    //         //     }
+    //         // }
+    //     }
+    //     Ok(())
+    // }
 
     pub fn put_many_all(&mut self, xs: &[(usize, usize, T)]) {
         // step 1: get each data point to their respective pe
@@ -305,7 +396,7 @@ impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
         my_incoming.dedup_by_key(|(r, c, _t)| *r * self.rows + *c);
         let n = my_incoming.len() as f32;
         dprintln!("[PE {:>2}] incoming: {:?}", self.ctx.my_pe(), my_incoming);
-        self.put_from_coo_all(&my_incoming).unwrap();
+        todo!("there used to be logic here, but it got removed when from_coo. todo: rewrite using from_coo");
         self.ctx.barrier_all();
     }
 }
@@ -340,12 +431,15 @@ pub fn main() {
         ctx.barrier_all();
     }
 
-    let mut m2 = CrsMatrix::new(64, 64, &ctx, &shm);
-    m2.put_many_all(&(0..8).map(|i| (i * mpe, i * mpe * 2, i)).map(|(r, c, t)| (r % 64, c % 64, t)).collect::<Vec<_>>());
+    let my_xs =
+        (0..8)
+            .map(|i| (i * mpe, i * mpe * 2, i))
+            .map(|(r, c, t)| (r % 64, c % 64, t))
+            .collect::<Vec<_>>();
+    let m2 = CrsMatrix::from_coo(64, 64, &my_xs, &ctx, &shm);
 
     println!("row_ptrs = {:?}", &m2.row_ptrs[..5]);
     println!("row_ptrs.len() = {}", m2.row_ptrs.len());
     println!("col_idxs = {:?}", m2.col_idxs.span(..));
     println!("xs = {:?}", m2.xs.span(..));
-
 }

@@ -51,24 +51,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     if mype == 0 {
         println!("[PE {:>2}] adj matrix dimensions: {}x{}", mype, *max, *max);
     }
-    let mut adj = CrsMatrix::new(*max + 1, *max + 1, &ctx, &shm);
 
     println!("[PE {:>2}] storing {} edges into adj matrix", mype, edges.len());
     let edges = edges
         .into_par_iter()
         .map(|(r, c)| (r, c, 1u8))
         .collect::<Vec<_>>();
-    for (i, chunk) in edges.chunks(262144).enumerate() {
-        println!(
-            "[PE {:>2}] storing edges[{}..{}] into adj matrix",
-            mype,
-            i * 262144,
-            (i + 1) * 262144
-        );
-        adj.put_many_all(&chunk);
-    }
+    let adj = CrsMatrix::from_coo(*max + 1, *max + 1, &edges, &ctx, &shm);
+
     println!("[PE {:>2}] global edges: {}", mype, adj.nnz());
 
+    println!("[PE {:>2}] parsing searchlist...", mype);
     let search_input = BufReader::new(File::open("searchlist")?)
         .lines()
         .collect::<Result<Vec<String>, std::io::Error>>()?;
@@ -81,8 +74,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect::<Vec<_>>();
     let searches = Shvec::from_iter(&ctx, &shm, searches.into_iter());
     let all_searches = searches.collect();
-    let mut distances = Vec::new();
+    println!("[PE {:>2}] parsed {} searchpairs", mype, all_searches.len());
+    let mut distances = Vec::with_capacity(all_searches.len());
+    println!("[PE {:>2}] starting searches!", mype);
     for (from, to) in all_searches {
+        if mype == 0 {
+            println!("search #{:>4}: {from:>10} -> {to:>10}...", distances.len());
+        }
         distances.push(bfs(from, to, &adj, &ctx, &shm));
     }
 
@@ -127,14 +125,15 @@ fn bfs(
         .step_by(ctx.n_pes())
         .copied()
         .collect::<Vec<_>>();
-    let mut q = my_targets;
+    let mut q1 = my_targets.clone();
+    let mut q2 = my_targets;
     let mut flag = shm.shbox(0);
     // println!("pe {}: start search for {to}...", ctx.my_pe().raw());
     if mpe == 0 {
         // TODO: update progress
         // println!("start search for {to}");
     }
-    *len = bfs_p(ctx, shm, &adj, to, &mut q, &mut flag, 1);
+    *len = bfs_p(ctx, shm, &adj, to, &mut q1, &mut q2, &mut flag, 1);
     ctx.barrier_all();
     if mpe == 0 {
         // println!("found {from}..[{} nodes]..to", *len - 1);
@@ -149,11 +148,12 @@ fn bfs_p(
     shm: &Shmallocator<'_>,
     adj: &CrsMatrix<'_, u8>,
     target: usize,
-    q: &mut Vec<usize>,
+    q_targets: &mut Vec<usize>,
+    q_scratch: &mut Vec<usize>,
     flag: &mut Shbox<'_, usize>,
     layers: usize,
 ) -> usize {
-    if q.contains(&target) {
+    if q_targets.contains(&target) {
         // println!(
         //     "halting: i (pe {}) found a path in {layers}",
         //     ctx.my_pe().raw()
@@ -172,17 +172,20 @@ fn bfs_p(
         //     ctx.my_pe().raw()
         // );
         // prepare new queue
-        let next_targets = q
+        let next_targets = q_targets
             .iter()
             .map(|idx| adj.cols_on_row(*idx))
             .collect::<Vec<_>>();
-        q.clear();
+        q_scratch.clear();
         for t in next_targets {
-            q.extend_from_slice(&t);
+            q_scratch.extend_from_slice(&t);
         }
-        q.sort_unstable();
-        q.dedup();
-        bfs_p(ctx, shm, adj, target, q, flag, layers + 1)
+        q_scratch.sort_unstable();
+        q_scratch.dedup();
+        if layers > 200 || q_scratch == q_targets {
+            println!("pe {}: i think i'm in an infinite loop: {q_targets:?}", ctx.my_pe());
+        }
+        bfs_p(ctx, shm, adj, target, q_scratch, q_targets, flag, layers + 1)
     }
 }
 
