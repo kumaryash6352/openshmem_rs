@@ -1,5 +1,7 @@
 use std::{collections::HashMap, fmt::Debug, ops::Range};
 
+use rayon::prelude::*;
+
 use openshmem_rs::{
     shmalloc::{Shbox, Shmallocator},
     Pod, ShmemCtx, Zeroable, PE,
@@ -49,7 +51,7 @@ pub struct CrsMatrix<'ctx, T: Pod + Clone> {
     row_ptrs: Shbox<'ctx, [usize]>,
 }
 
-impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
+impl<'ctx, T: Zeroable + Send + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
     pub fn new(
         rows: usize,
         cols: usize,
@@ -242,7 +244,7 @@ impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
         }
         // now, my_incoming has every value we care about
         // sort by "insertion" order
-        my_incoming.sort_by_cached_key(|(r, c, _x)| r * rows + c);
+        my_incoming.par_sort_by_cached_key(|(r, c, _x)| r * rows + c);
         // eliminate collisions
         // TODO: doc that if for coords x, y there are more than one (x, y, c) in xs, c can be any one given
         my_incoming.dedup_by_key(|(r, c, _x)| *r * rows + *c);
@@ -392,7 +394,7 @@ impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
         //     start_group = i;
         // }
         let n_pes = self.ctx.n_pes();
-        my_incoming.sort_unstable_by_key(|(r, c, _t)| r * self.rows + c);
+        my_incoming.par_sort_unstable_by_key(|(r, c, _t)| r * self.rows + c);
         my_incoming.dedup_by_key(|(r, c, _t)| *r * self.rows + *c);
         let n = my_incoming.len() as f32;
         dprintln!("[PE {:>2}] incoming: {:?}", self.ctx.my_pe(), my_incoming);

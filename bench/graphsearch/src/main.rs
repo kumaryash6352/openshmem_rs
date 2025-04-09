@@ -125,7 +125,12 @@ fn bfs(
         .step_by(ctx.n_pes())
         .copied()
         .collect::<Vec<_>>();
-    my_targets.par_sort_unstable();
+    // "feels right" heuristic
+    if my_targets.len() > 32767 {
+        my_targets.par_sort_unstable();
+    } else {
+        my_targets.sort_unstable();
+    }
     let mut q1 = my_targets.clone();
     let mut q2 = my_targets;
     let mut flag = shm.shbox(0);
@@ -180,7 +185,7 @@ fn bfs_p(
         for t in next_targets {
             q_scratch.extend_from_slice(&t);
         }
-        q_scratch.sort_unstable();
+        q_scratch.par_sort_unstable();
         q_scratch.dedup();
         if layers > 200 || q_scratch == q_targets {
             println!("pe {}: i think i'm in an infinite loop: {q_targets:?}", ctx.my_pe());
