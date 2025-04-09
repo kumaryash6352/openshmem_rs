@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let mut adj = CrsMatrix::new(*max + 1, *max + 1, &ctx, &shm);
 
-    println!("[PE {:>2}] storing edges into adj matrix", mype);
+    println!("[PE {:>2}] storing {} edges into adj matrix", mypem edges.len());
     let edges = edges
         .into_par_iter()
         .map(|(r, c)| (r, c, 1u8))
