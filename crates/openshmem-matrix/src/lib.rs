@@ -1,4 +1,4 @@
-use std::{fmt::Debug, ops::Range};
+use std::{collections::HashMap, fmt::Debug, ops::Range};
 
 use openshmem_rs::{
     shmalloc::{Shbox, Shmallocator},
@@ -24,7 +24,6 @@ pub enum Either<L: Debug, R: Debug> {
     L(L),
     R(R),
 }
-
 
 #[derive(Debug)]
 pub struct RowOnDifferentPe;
@@ -123,6 +122,19 @@ impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
         end - start
     }
 
+    pub fn xs_on_row(&self, row: usize) -> Box<[T]> {
+        let (idx, remote_pe) = self.global_row_to_pe_row(row);
+        let (start, end) = self.ctx.quiet((
+            self.row_ptrs.get_single_nbi(idx, remote_pe, self.ctx),
+            self.row_ptrs.get_single_nbi(idx + 1, remote_pe, self.ctx),
+        ));
+        if start == end {
+            Box::default()
+        } else {
+            self.xs.span_remote(start..end, remote_pe)
+        }
+    }
+
     pub fn nnz(&self) -> usize {
         let mut res = self.shm.shbox(self.xs.len());
         res.reduce_sum(self.ctx);
@@ -191,6 +203,51 @@ impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
         }
     }
 
+    pub fn put_from_coo_all(&mut self, xs: &[(usize, usize, T)]) -> Result<(), RowOnDifferentPe> {
+        let mut rows = HashMap::new();
+        for (row, col, t) in xs {
+            let (row_idx, pe) = self.global_row_to_pe_row(*row);
+            if pe != self.mpe {
+                return Err(RowOnDifferentPe);
+            };
+            rows.entry(row_idx)
+                .or_insert_with(|| {
+                    self.cols_on_row(*row)
+                        .iter()
+                        .copied()
+                        .zip(self.xs_on_row(*row).iter().copied())
+                        .collect::<Vec<_>>()
+                })
+                .push((*col, t.clone()));
+        }
+
+        let min_cap = xs.len() + self.xs.capacity();
+        self.xs.grow_to(min_cap);
+        self.col_idxs.grow_to(min_cap);
+
+        for (row_idx, row_data) in rows {
+            for (col, t) in row_data {
+                let start = self.row_ptrs[row_idx];
+                let end = self.row_ptrs[row_idx + 1];
+                match self.col_idxs.span(start..end).binary_search(&col) {
+                    Ok(replace_at) => self.xs.replace(start + replace_at, t),
+                    Err(insert_at) => {
+                        self.xs
+                            .insert(start + insert_at, t.clone())
+                            .expect("we allocated enough earlier");
+                        self.col_idxs
+                            .insert(start + insert_at, col)
+                            .expect("we allocated enough earlier");
+                        self.row_ptrs[(row_idx + 1)..]
+                            .iter_mut()
+                            .for_each(|r| *r += 1);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn put_many_all(&mut self, xs: &[(usize, usize, T)]) {
         // step 1: get each data point to their respective pe
         let avg_cap = xs.len().div_ceil(self.ctx.n_pes());
@@ -198,8 +255,7 @@ impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
             .map(|_| Vec::with_capacity(avg_cap))
             .collect::<Vec<_>>();
         for (row, col, x) in xs {
-            let (_remote_row_idx, remote_pe) =
-                self.global_row_to_pe_row(*row);
+            let (_remote_row_idx, remote_pe) = self.global_row_to_pe_row(*row);
             outboxes[remote_pe.raw()].push((*row, *col, *x));
         }
         let mut my_incoming = Vec::new();
@@ -245,20 +301,11 @@ impl<'ctx, T: Zeroable + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
         //     start_group = i;
         // }
         let n_pes = self.ctx.n_pes();
+        my_incoming.sort_unstable_by_key(|(r, c, _t)| r * self.rows + c);
+        my_incoming.dedup_by_key(|(r, c, _t)| *r * self.rows + *c);
         let n = my_incoming.len() as f32;
         dprintln!("[PE {:>2}] incoming: {:?}", self.ctx.my_pe(), my_incoming);
-        for (i, (row, col, x)) in my_incoming.into_iter().enumerate() {
-            dprintln!(
-                "[PE {:>2}] {:.2}% done",
-                self.ctx.my_pe(),
-                i as f32 / n * 100.0
-            );
-            dprintln!(
-                "[PE {:>2}] putting {x:?} into {row}, {col}",
-                self.ctx.my_pe(),
-            );
-            self.put(row, col, x).unwrap();
-        }
+        self.put_from_coo_all(&my_incoming).unwrap();
         self.ctx.barrier_all();
     }
 }
@@ -292,4 +339,13 @@ pub fn main() {
         );
         ctx.barrier_all();
     }
+
+    let mut m2 = CrsMatrix::new(64, 64, &ctx, &shm);
+    m2.put_many_all(&(0..8).map(|i| (i * mpe, i * mpe * 2, i)).map(|(r, c, t)| (r % 64, c % 64, t)).collect::<Vec<_>>());
+
+    println!("row_ptrs = {:?}", &m2.row_ptrs[..5]);
+    println!("row_ptrs.len() = {}", m2.row_ptrs.len());
+    println!("col_idxs = {:?}", m2.col_idxs.span(..));
+    println!("xs = {:?}", m2.xs.span(..));
+
 }

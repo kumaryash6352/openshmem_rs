@@ -212,6 +212,31 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         Some(unsafe { res.assume_init() })
     }
 
+    pub fn grow_add(&mut self, additional_cap: usize) {
+        // SAFETY: we take a mutable reference to self, so no
+        //         other threads are holding on to the lock.
+        unsafe { self.lck[*self.ctx.my_pe() as usize].lock_raw() };
+        let cap = self.buf.len() + additional_cap;
+        let mut new_buf = self.shm.array_gen(|_| MaybeUninit::uninit(), cap);
+        // SAFETY: we know self.buf has at least self.len initialized elements
+        //         by the safety requirements of self.len.
+        //         we also know self.buf and new_buf do not overlap since we just allocated
+        //         new_buf
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                self.buf.as_ptr(),
+                new_buf.as_mut_ptr(),
+                self.len.atomic_fetch_local(&self.ctx),
+            );
+        }
+        self.buf = new_buf;
+        unsafe { self.lck[*self.ctx.my_pe() as usize].unlock_raw() };
+    }
+
+    pub fn capacity(&mut self) -> usize {
+        self.buf.len()
+    }
+
     pub fn grow_to(&mut self, new_capacity: usize) -> bool {
         if new_capacity > self.buf.len() {
             // SAFETY: we take a mutable reference to self, so no
