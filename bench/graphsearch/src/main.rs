@@ -119,12 +119,13 @@ fn bfs(
     // println!("pe {}: first_conns = {first_conns:?}", mpe);
     let mut len = shm.shbox(0);
     // divide work
-    let my_targets = (*first_conns)
+    let mut my_targets = (*first_conns)
         .into_iter()
         .skip(mpe)
         .step_by(ctx.n_pes())
         .copied()
         .collect::<Vec<_>>();
+    my_targets.par_sort_unstable();
     let mut q1 = my_targets.clone();
     let mut q2 = my_targets;
     let mut flag = shm.shbox(0);
@@ -153,15 +154,14 @@ fn bfs_p(
     flag: &mut Shbox<'_, usize>,
     layers: usize,
 ) -> usize {
-    if q_targets.contains(&target) {
+    if q_targets.binary_search(&target).is_ok() {
         // println!(
         //     "halting: i (pe {}) found a path in {layers}",
         //     ctx.my_pe().raw()
         // );
-        **flag = ctx.my_pe().raw();
+        **flag = ctx.my_pe().raw() + 1;
     }
     //println!("pe {}: waiting on flag max...", ctx.my_pe().raw());
-    ctx.barrier_all();
     flag.reduce_max(ctx);
     if **flag > 0 {
         // println!("halting: pe {} found a path", **flag);
