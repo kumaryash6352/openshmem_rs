@@ -8,13 +8,15 @@ use rayon::prelude::*;
 use std::{
     error::Error,
     fs::File,
-    io::{BufRead as _, BufReader},
+    io::{BufRead as _, BufReader, Write},
+    time::Instant,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world!");
 
     let ctx = ShmemCtx::init().unwrap();
+    let start = Instant::now();
     let shm = ctx.shmallocator();
     let npes = ctx.n_pes();
     let mype = ctx.my_pe().raw();
@@ -52,7 +54,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("[PE {:>2}] adj matrix dimensions: {}x{}", mype, *max, *max);
     }
 
-    println!("[PE {:>2}] storing {} edges into adj matrix", mype, edges.len());
+    println!(
+        "[PE {:>2}] storing {} edges into adj matrix",
+        mype,
+        edges.len()
+    );
     let edges = edges
         .into_par_iter()
         .map(|(r, c)| (r, c, 1u8))
@@ -91,9 +97,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             "avg distance: {}",
             distances.iter().sum::<usize>() as f32 / distances.len() as f32
         );
+        let mut out = File::create("searchtime")?;
+        writeln!(
+            out,
+            "{} searches in {}s ({} searches per second)",
+            searches.len(),
+            start.elapsed().as_secs_f32(),
+            searches.len() as f32 / start.elapsed().as_secs_f32()
+        )?;
     }
-
-    drop(searches);
 
     Ok(())
 }
@@ -126,11 +138,12 @@ fn bfs(
         .copied()
         .collect::<Vec<_>>();
     // "feels right" heuristic
-    if my_targets.len() > 32767 {
-        my_targets.par_sort_unstable();
-    } else {
-        my_targets.sort_unstable();
-    }
+    // if my_targets.len() > 32767 {
+    //     my_targets.par_sort_unstable();
+    // } else {
+    // screw the heuristic we use par elsewhere too
+    my_targets.sort_unstable();
+    // }
     let mut q1 = my_targets.clone();
     let mut q2 = my_targets;
     let mut flag = shm.shbox(0);
@@ -188,9 +201,21 @@ fn bfs_p(
         q_scratch.par_sort_unstable();
         q_scratch.dedup();
         if layers > 200 || q_scratch == q_targets {
-            println!("pe {}: i think i'm in an infinite loop: {q_targets:?}", ctx.my_pe());
+            println!(
+                "pe {}: i think i'm in an infinite loop: {q_targets:?}",
+                ctx.my_pe()
+            );
         }
-        bfs_p(ctx, shm, adj, target, q_scratch, q_targets, flag, layers + 1)
+        bfs_p(
+            ctx,
+            shm,
+            adj,
+            target,
+            q_scratch,
+            q_targets,
+            flag,
+            layers + 1,
+        )
     }
 }
 
