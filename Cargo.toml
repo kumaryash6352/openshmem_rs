@@ -13,6 +13,9 @@ members = [
     "crates/openshmem-vec",
     "bench/graphsearch"
 ]
+exclude = [
+    "bench/shmemchair/rs"
+]
 
 
 [features]
