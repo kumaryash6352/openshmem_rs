@@ -42,7 +42,6 @@ pub mod nbi;
 pub mod reduce;
 pub mod shmalloc;
 pub mod shmutex;
-pub mod signal;
 pub mod traits;
 pub mod wait;
 
