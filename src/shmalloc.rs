@@ -8,10 +8,9 @@ use std::{
     ptr::NonNull,
 };
 
-use bytemuck::Zeroable;
 use openshmem_sys::shmem::{
-    shmem_align, shmem_calloc, shmem_free, shmem_getmem, shmem_getmem_nbi, shmem_putmem,
-    shmem_putmem_nbi, shmem_realloc,
+    shmem_align, shmem_alltoallmem, shmem_calloc, shmem_free, shmem_getmem, shmem_getmem_nbi,
+    shmem_putmem, shmem_putmem_nbi, shmem_realloc, shmem_team_t,
 };
 
 use crate::{
@@ -19,6 +18,7 @@ use crate::{
     nbi::{nbi_noout_op, PendingNbiOp, PendingNbiSliceOp, PendingNbiUnitOp},
     nbi_op, nbi_slice_op,
     shmutex::Shmlock,
+    traits::Shend,
     ShmemCtx, PE,
 };
 
@@ -28,9 +28,8 @@ pub struct Shmallocator<'ctx> {
     // We hold on to the ctx so we can verify
     // that we have not shmem_finalize'd.
     //
-    // Technically, we could've just PhantomDataL<&'ctx ()>,
+    // Technically, we could've just PhantomData<&'ctx ()>,
     // but this is clearer.
-    #[expect(unused, reason = "ctx held on to for future use")]
     ctx: &'ctx ShmemCtx,
 }
 
@@ -101,7 +100,7 @@ impl<'ctx> Shmallocator<'ctx> {
     /// Constructs a shared mutable slice with at least `len` `T::default()`'s.
     ///
     /// Note that this type is technically unsound. I don't know how to fix that yet.
-    pub fn array_default<T: Default>(&'ctx self, len: usize) -> Shbox<'ctx, [T]> {
+    pub fn array_default<T: Shend + Default>(&'ctx self, len: usize) -> Shbox<'ctx, [T]> {
         let mut cap = self.shbox(len);
         cap.reduce_max(self.ctx);
         let mut vec = Box::new_zeroed_slice_in(*cap, self);
@@ -115,8 +114,9 @@ impl<'ctx> Shmallocator<'ctx> {
     /// Constructs a shared mutable slice with at least `len` `f(usize)`'s.
     /// The parameter passed to `f` is the index being filled.
     ///
-    /// Note that this type is technically unsound. I don't know how to fix that yet.
-    pub fn array_gen<T>(&'ctx self, mut f: impl FnMut(usize) -> T, len: usize) -> Shbox<'ctx, [T]> {
+    /// Each PE will generate it's own elements. If you want to instead generate `len` elements
+    /// in total, consider combining this with `Shbox::collect`
+    pub fn array_gen<T: Shend>(&'ctx self, mut f: impl FnMut(usize) -> T, len: usize) -> Shbox<'ctx, [T]> {
         let mut cap = self.shbox(len);
         cap.reduce_max(self.ctx);
         let mut vec = Box::new_zeroed_slice_in(*cap, self);
@@ -132,7 +132,7 @@ impl<'ctx> Shmallocator<'ctx> {
     /// Constructs a shared mutable slice with at least `len` `t's.
     ///
     /// Note that this type is technically unsound. I don't know how to fix that yet.
-    pub fn array<T: Clone>(&'ctx self, t: T, len: usize) -> Shbox<'ctx, [T]> {
+    pub fn array<T: Shend>(&'ctx self, t: T, len: usize) -> Shbox<'ctx, [T]> {
         let mut cap = self.shbox(len);
         cap.reduce_max(self.ctx);
         let mut vec = Box::new_zeroed_slice_in(*cap, self);
@@ -147,7 +147,7 @@ impl<'ctx> Shmallocator<'ctx> {
     ///
     /// Note that this is a collective operation. All
     /// PEs must participate.
-    pub fn shbox<T>(&'ctx self, t: T) -> Shbox<'ctx, T> {
+    pub fn shbox<T: Shend>(&'ctx self, t: T) -> Shbox<'ctx, T> {
         Shbox {
             internal: Box::new_in(t, self),
         }
@@ -197,7 +197,7 @@ impl<'ctx, T: ?Sized> Shbox<'ctx, T> {
     // }
 }
 
-impl<'ctx, T: ?Sized + Zeroable> Shbox<'ctx, T> {
+impl<'ctx, T: ?Sized + Shend> Shbox<'ctx, T> {
     pub fn put(&mut self, data: &T, pe: PE, _ctx: &ShmemCtx) {
         unsafe {
             shmem_putmem(
@@ -248,10 +248,9 @@ impl<'ctx, T: ?Sized + Zeroable> Shbox<'ctx, T> {
         }
         unsafe { nbi_op(buffer) }
     }
-
 }
 
-impl<'ctx, T: Sized + Zeroable> Shbox<'ctx, [T]> {
+impl<'ctx, T: Sized + Shend> Shbox<'ctx, [T]> {
     /// Instantly replace the `offset..(offset + data.len())` elements of `shbox @ PE`
     /// with the elements from `data`.
     ///
@@ -423,13 +422,19 @@ impl<'ctx, T: Sized + Zeroable> Shbox<'ctx, [T]> {
                 (self.raw_ptr_mut() as *mut T).offset(idx as _) as *mut c_void,
                 data as *const T as *const c_void,
                 size_of::<T>(),
-                pe.0 as _
+                pe.0 as _,
             );
         }
         nbi_noout_op()
     }
 
-    pub fn put_many_nbi<'s>(&'s mut self, offset: usize, data: &'s [T], pe: PE, _ctx: &ShmemCtx) -> PendingNbiUnitOp<'s> {
+    pub fn put_many_nbi<'s>(
+        &'s mut self,
+        offset: usize,
+        data: &'s [T],
+        pe: PE,
+        _ctx: &ShmemCtx,
+    ) -> PendingNbiUnitOp<'s> {
         if data.len() + offset > self.len() {
             panic!("tried to write more data into a shbox than would fit!");
         }
@@ -447,6 +452,62 @@ impl<'ctx, T: Sized + Zeroable> Shbox<'ctx, [T]> {
         }
 
         nbi_noout_op()
+    }
+
+    // TODO: currently, this means we just panic at runtime
+    //       it'd be nice if we could find some way to ensure
+    //       type-wise we have a rectangular array
+    pub fn all_to_all_shbox(&self, nelems_per_pe: usize, ctx: &ShmemCtx) -> Self {
+        assert_eq!(
+            nelems_per_pe * ctx.n_pes(),
+            self.len(),
+            "len and nelems * pes mismatch in all_to_all!"
+        );
+
+        let shm = ctx.shmallocator();
+        let mut shout: Box<[MaybeUninit<T>], _> = Box::new_uninit_slice_in(nelems_per_pe * ctx.n_pes(), &shm);
+
+        unsafe {
+            shmem_alltoallmem(
+                *ctx.team().interpret_as::<shmem_team_t>(),
+                shout.as_mut_ptr() as *mut c_void,
+                self.as_ptr() as *const c_void,
+                nelems_per_pe * size_of::<T>(),
+            );
+        }
+
+        Shbox {
+            // here we see a symptom of the shmallocator
+            // this transmtue should be removable at some point
+            // but we need either:
+            // 1. shmalloc is copy
+            // 2. stored ref to shmalloc
+            internal: unsafe { transmute(shout) }
+        }
+    }
+
+    pub fn all_to_all(&self, nelems_per_pe: usize, ctx: &ShmemCtx) -> Box<[T]> {
+        assert_eq!(
+            nelems_per_pe * ctx.n_pes(),
+            self.len(),
+            "len and nelems * pes mismatch in all_to_all!"
+        );
+
+        let shm = ctx.shmallocator();
+        let mut shout: Box<[MaybeUninit<T>], _> = Box::new_uninit_slice_in(nelems_per_pe * ctx.n_pes(), &shm);
+
+        unsafe {
+            shmem_alltoallmem(
+                *ctx.team().interpret_as::<shmem_team_t>(),
+                shout.as_mut_ptr() as *mut c_void,
+                self.as_ptr() as *const c_void,
+                nelems_per_pe * size_of::<T>(),
+            );
+        }
+
+        let mut lout = Box::new_uninit_slice(nelems_per_pe * ctx.n_pes());
+        lout.copy_from_slice(&shout);
+        unsafe { lout.assume_init() }
     }
 }
 

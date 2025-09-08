@@ -314,3 +314,15 @@ macro_rules! impl_nbiop_tuple {
         }
     };
 }
+
+/// impl_shend_tuple!(A, B, C, etc.) -> impl Shend for (A, B, C, etc.)
+#[macro_export]
+macro_rules! impl_shend_tuple {
+    ($($ty:ident),*) => {
+        unsafe impl<$($ty),*> Shend for ($($ty),*)
+        where
+            $($ty: Shend),*
+        {
+        }
+    };
+}

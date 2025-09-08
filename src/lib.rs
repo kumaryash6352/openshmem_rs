@@ -12,38 +12,38 @@
 #![feature(allocator_api, set_ptr_value, ptr_as_ref_unchecked)]
 
 use crate::shmalloc::{apply_range_bounds, MutableArrayView, Shbox, Shmallocator};
-pub use bytemuck::{Pod, AnyBitPattern, Zeroable};
 use nbi::{nbi_op, nbi_slice_op, NbiOp, PendingNbiOp, PendingNbiSliceOp};
 use std::{
-    cell::UnsafeCell,
     ffi::{c_char, c_void, CStr, CString},
     fmt::Display,
     marker::PhantomData,
-    mem::{self, transmute, MaybeUninit},
+    mem::{transmute, MaybeUninit},
     ops::RangeBounds,
     sync::Once,
 };
+use traits::Shend;
 
 use openshmem_sys::shmem::{
     shmem_addr_accessible, shmem_barrier_all, shmem_collectmem, shmem_ctx_t, shmem_finalize,
-    shmem_getmem, shmem_getmem_nbi, shmem_global_exit, shmem_impl_team_t, shmem_info_get_name,
-    shmem_info_get_version, shmem_init, shmem_my_pe, shmem_n_pes, shmem_pe_accessible, shmem_ptr,
-    shmem_putmem, shmem_quiet, shmem_team_config_t, shmem_team_my_pe, SHMEM_MAX_NAME_LEN,
-    SHMEM_TEAM_WORLD,
+    shmem_global_exit, shmem_impl_team_t, shmem_info_get_name, shmem_info_get_version, shmem_init,
+    shmem_my_pe, shmem_n_pes, shmem_pe_accessible, shmem_ptr, shmem_quiet, shmem_team_config_t,
+    shmem_team_my_pe, SHMEM_MAX_NAME_LEN, SHMEM_TEAM_WORLD,
 };
 
 #[cfg(test)]
 mod test;
 
-mod macros;
 use thiserror::Error;
 
 pub use openshmem_sys::shmem as ffi;
 pub mod atomics;
+mod macros;
 pub mod nbi;
 pub mod reduce;
 pub mod shmalloc;
 pub mod shmutex;
+pub mod signal;
+pub mod traits;
 pub mod wait;
 
 static CTX_INITIALIZED: Once = Once::new();
@@ -465,7 +465,9 @@ impl TeamConfig {
 impl Drop for ShmemCtx {
     fn drop(&mut self) {
         if std::thread::panicking() {
-            unsafe { shmem_global_exit(1); }
+            unsafe {
+                shmem_global_exit(1);
+            }
         } else {
             unsafe { shmem_finalize() }
         }
@@ -527,7 +529,7 @@ impl<'ctx> PEReference<'ctx> {
     ) -> MutableArrayView<'ctx, 'shbox, T, R>
     where
         'ctx: 'shbox,
-        T: Zeroable,
+        T: Shend,
         R: RangeBounds<usize> + Clone,
     {
         let buffer_size = {
@@ -543,10 +545,11 @@ impl<'ctx> PEReference<'ctx> {
         }
     }
 
+    /// Replace the contents of the remote Shbox.
     pub fn put<'shbox, T>(&self, shbox: &'shbox mut Shbox<'ctx, T>, data: &T)
     where
         'ctx: 'shbox,
-        T: Zeroable,
+        T: Shend,
     {
         shbox.put(data, self.pe, self.ctx)
     }
@@ -559,24 +562,25 @@ impl<'ctx> PEReference<'ctx> {
     pub fn put_many<'shbox, T>(&self, shbox: &'shbox mut Shbox<'ctx, [T]>, data: &[T])
     where
         'ctx: 'shbox,
-        T: Zeroable,
+        T: Shend,
     {
         shbox.put_many(0, data, self.pe, self.ctx);
     }
 
+    /// Replace the contents of a single element in the remote Shbox.
     pub fn put_single<'shbox, T>(&self, shbox: &'shbox mut Shbox<'ctx, [T]>, idx: usize, data: &T)
     where
         'ctx: 'shbox,
-        T: Zeroable,
+        T: Shend,
     {
         shbox.put_single(idx, data, self.pe, self.ctx);
     }
 
-    /// Read the remote element of the Shbox.
+    /// Read the contents of the remote Shbox.
     pub fn get<'shbox, T>(&self, shbox: &'shbox Shbox<'ctx, T>) -> T
     where
         'ctx: 'shbox,
-        T: Zeroable,
+        T: Shend,
     {
         shbox.get(self.pe, self.ctx)
     }
@@ -585,38 +589,45 @@ impl<'ctx> PEReference<'ctx> {
     pub fn get_many<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R) -> Box<[T]>
     where
         'ctx: 'shbox,
-        T: Zeroable,
+        T: Shend,
         R: RangeBounds<usize> + Clone,
     {
         shbox.get_many(self.pe, range, self.ctx)
     }
-    
+
+    /// Read the contents of a single element in the remote Shbox.
     pub fn get_single<'shbox, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, idx: usize) -> T
     where
         'ctx: 'shbox,
-        T: Zeroable,
+        T: Shend,
     {
         shbox.get_single(self.pe, idx, self.ctx)
     }
 
     /// Equivalent to `get`, but into a user-provided buffer instead
     /// of allocating. Panics if the buffer is not large enough.
-    pub fn get_many_into<'shbox, R, T>(&self, shbox: &'shbox Shbox<'ctx, [T]>, range: R, into: &mut [T])
-    where
+    pub fn get_many_into<'shbox, R, T>(
+        &self,
+        shbox: &'shbox Shbox<'ctx, [T]>,
+        range: R,
+        into: &mut [T],
+    ) where
         'ctx: 'shbox,
-        T: Zeroable,
+        T: Shend,
         R: RangeBounds<usize> + Clone,
     {
         shbox.get_many_into(self.pe, range, into, self.ctx);
     }
 
+    /// Asynchronously reads the contents of a remote Shbox.
     pub fn get_nbi<'shbox, T>(&self, shbox: &'shbox Shbox<'shbox, T>) -> PendingNbiOp<'shbox, T>
     where
-        T: Zeroable,
+        T: Shend,
     {
         shbox.get_nbi(self.pe)
     }
 
+    /// Asynchronously read a range of elements from a remote Shbox.
     pub fn get_many_nbi<'shbox, R, T>(
         &self,
         shbox: &'shbox Shbox<'ctx, [T]>,
@@ -624,19 +635,20 @@ impl<'ctx> PEReference<'ctx> {
     ) -> PendingNbiSliceOp<'shbox, T>
     where
         'ctx: 'shbox,
-        T: Zeroable,
+        T: Shend,
         R: RangeBounds<usize> + Clone,
     {
         shbox.get_many_nbi(range, self.pe, self.ctx)
     }
 
+    /// Asynchronously read a single element from a remote Shbox.
     pub fn get_single_nbi<'shbox, T>(
         &self,
         shbox: &'shbox Shbox<'shbox, [T]>,
         idx: usize,
     ) -> PendingNbiOp<'shbox, T>
     where
-        T: Zeroable,
+        T: Shend,
     {
         shbox.get_single_nbi(idx, self.pe, self.ctx)
     }

@@ -3,6 +3,9 @@ use std::error::Error;
 use openshmem_rs::ShmemCtx;
 use rand::random;
 
+// NBI operations let us perform PGAS operations
+// asynchronously--or more often, concurrently.
+
 fn main() -> Result<(), Box<dyn Error>> {
     let ctx = ShmemCtx::init()?;
     let shmalloc = ctx.shmallocator();

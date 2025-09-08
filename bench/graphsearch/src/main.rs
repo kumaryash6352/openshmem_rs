@@ -1,7 +1,6 @@
 use openshmem_matrix::CrsMatrix;
 use openshmem_rs::{
-    shmalloc::{Shbox, Shmallocator},
-    ShmemCtx,
+    atomics::Atomic, shmalloc::{Shbox, Shmallocator}, ShmemCtx
 };
 use openshmem_vec::Shvec;
 use rayon::prelude::*;
@@ -80,13 +79,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect::<Vec<_>>();
     let searches = Shvec::from_iter(&ctx, &shm, searches.into_iter());
     let all_searches = searches.collect();
+    let mut search_cursor = shm.shbox(Atomic::new(0usize));
     println!("[PE {:>2}] parsed {} searchpairs", mype, all_searches.len());
     let mut distances = Vec::with_capacity(all_searches.len());
     println!("[PE {:>2}] starting searches!", mype);
     for (from, to) in all_searches {
-        if mype == 0 {
-            println!("search #{:>4}: {from:>10} -> {to:>10}...", distances.len());
-        }
+        println!("[PE {mype:>2}]search #{:>4}: {from:>10} -> {to:>10}...", distances.len());
         distances.push(bfs(from, to, &adj, &ctx, &shm));
     }
 
@@ -121,6 +119,11 @@ fn bfs(
     //           we recurse into all connected nodes where idx % n_pes == mpe
     //           at each step, if a node has found the element we want, we send the signal.
     //           if the signal, we exit and that node shares the path with all others
+    // TODO: new strat:
+    //           global atomic counter
+    //           each pe fetchincs the atomic counter
+    //           runs the fetchinc'd idx search pair
+    //           "work stealing"
     let conn_buf = if adj.row_on_this_pe(from) {
         let conns = adj.cols_on_row(from);
         Shvec::from_iter(ctx, shm, conns.as_ref().into_iter().copied())

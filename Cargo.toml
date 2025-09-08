@@ -11,7 +11,9 @@ repository = "https://github.com/kumaryash6352/openshmem-rs"
 members = [
     "crates/openshmem-matrix",
     "crates/openshmem-vec",
-    "bench/graphsearch"
+    "bench/graphsearch",
+    "crates/openshmem-message-queue",
+    "crates/openshmem-macros"
 ]
 exclude = [
     "bench/shmemchair/rs"
@@ -34,6 +36,7 @@ ctor = "0.2.8"
 bytemuck = { version = "1.19", features = ["derive", "zeroable_maybe_uninit"] }
 lazy_static = "1.5"
 openshmem-sys = { path = "./openshmem-sys" }
+openshmem-macros = { path = "./crates/openshmem-macros" }
 paste = "1.0"
 rand = "0.8.5"
 thiserror = "1.0"

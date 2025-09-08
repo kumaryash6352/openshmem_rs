@@ -3,19 +3,37 @@ use std::{
 };
 
 use openshmem_rs::{
-    atomics::Atomic, ffi::{shmem_collectmem, SHMEM_TEAM_WORLD}, shmalloc::{Shbox, Shmallocator}, shmutex::{Shmlock, ShmlockLock}, ShmemCtx, PE, Zeroable
+    atomics::Atomic, ffi::{shmem_collectmem, SHMEM_TEAM_WORLD}, shmalloc::{Shbox, Shmallocator}, shmutex::{Shmlock, ShmlockLock}, traits::Shend, ShmemCtx, PE
 };
 
 /// Analogous to `Vec`, but on the Symmetric Heap.
 ///
-/// # Why AnyBitPattern?
-///
-/// MaybeUninit is not Pod, even if T is Pod.
-/// See this issue for more details: https://github.com/Lokathor/bytemuck/pull/160
-pub struct Shvec<'ctx, T: Zeroable + Copy> {
+// `valid_len` vs `mem_len`
+//
+// `valid_len` is the amount of elements in the buffer that are fully
+// initialized. As in, for a non-zero `valid_len`, buf[valid_len] must
+// be inhabited.
+//
+// `mem_len` is the amount of elements in the buffer that
+// either have been initialized or will shortly be initialized.
+//
+// in other words, if buf is a series of slots for values,
+// `valid_len` is the count of initialized slots, while
+// `mem_len - valid_len` is the amount of slots mid-initialization
+pub struct Shvec<'ctx, T: Shend> {
     shm: &'ctx Shmallocator<'ctx>,
     ctx: &'ctx ShmemCtx,
-    len: Shbox<'ctx, Atomic<usize>>,
+    /// i is in bounds for buf[i] if valid_len > i
+    ///
+    /// more importantly, buf[valid_len] MUST be inited
+    /// update valid_len as late as possible to prevent reading
+    /// uninit data
+    valid_len: Shbox<'ctx, Atomic<usize>>,
+    /// pushing a value writes it to buf[mem_len]
+    ///
+    /// update mem_len as soon as possible to
+    /// prevent another PE overwriting your value
+    mem_len: Shbox<'ctx, Atomic<usize>>,
     lck: Shbox<'ctx, [Shmlock<'ctx>]>,
     buf: Shbox<'ctx, [MaybeUninit<T>]>,
 }
@@ -23,7 +41,7 @@ pub struct Shvec<'ctx, T: Zeroable + Copy> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WouldRealloc;
 
-impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
+impl<'ctx, T: Shend + Copy> Shvec<'ctx, T> {
     pub fn new(
         ctx: &'ctx ShmemCtx,
         shm: &'ctx Shmallocator<'ctx>,
@@ -34,7 +52,8 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         Self {
             ctx,
             shm,
-            len: shm.shbox(Atomic::new(0)),
+            valid_len: shm.shbox(Atomic::new(0)),
+            mem_len: shm.shbox(Atomic::new(0)),
             lck: shm.array_gen(|_| shm.lock(), ctx.n_pes()),
             buf: shm.array_gen(|_| MaybeUninit::uninit(), *cap),
         }
@@ -61,7 +80,8 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
             shm,
             buf: shm.array_gen(|i| init_buf[i], init_buf.len()),
             lck: shm.array_gen(|_| shm.lock(), ctx.n_pes()),
-            len: shm.shbox(Atomic::new(buf.len())),
+            valid_len: shm.shbox(Atomic::new(buf.len())),
+            mem_len: shm.shbox(Atomic::new(buf.len())),
         };
         assert!(r.len() == buf.len());
         r
@@ -70,7 +90,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
     pub fn clear(&mut self) {
         let mpe = self.ctx.my_pe();
         let _guard = self.lck[mpe.raw()].lock();
-        self.len.atomic_set(0, mpe, self.ctx);
+        self.valid_len.atomic_set(0, mpe, self.ctx);
     }
 
     pub fn extend(&mut self, from: &[T]) -> Result<(), WouldRealloc> {
@@ -79,13 +99,15 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         } else {
             let len = self.len();
             // SAFETY: MaybeUninit<T> and T are byte-equal and have the same alignment.
+            self.mem_len.atomic_add(from.len(), self.ctx.my_pe(), self.ctx);
             self.buf[len..(len + from.len())].copy_from_slice(unsafe { transmute(from) });
+            self.valid_len.atomic_add(from.len(), self.ctx.my_pe(), self.ctx);
             Ok(())
         }
     }
 
     pub fn index(&self, idx: usize) -> Option<T> {
-        if self.len.atomic_fetch_local(self.ctx) <= idx {
+        if self.valid_len.atomic_fetch_local(self.ctx) <= idx {
             None
         } else {
             Some(unsafe { self.buf[idx].assume_init() })
@@ -93,7 +115,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
     }
 
     pub fn index_many(&self, idxs: &[usize]) -> Box<[T]> {
-        let len = self.len.atomic_fetch_local(self.ctx);
+        let len = self.valid_len.atomic_fetch_local(self.ctx);
         let mut buf = Box::new_uninit_slice(idxs.len());
         for i in 0..idxs.len() {
             if i >= len {
@@ -105,7 +127,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
     }
 
     pub fn index_many_remote(&self, idxs: &[usize], pe: PE) -> Box<[T]> {
-        let len = self.len.atomic_fetch(pe, self.ctx);
+        let len = self.valid_len.atomic_fetch(pe, self.ctx);
         assert!(
             idxs.iter().all(|idx| *idx < len),
             "index in index_many_remote out of bounds"
@@ -123,7 +145,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
     }
 
     pub fn span(&self, range: impl RangeBounds<usize>) -> &[T] {
-        let len = self.len.atomic_fetch_local(self.ctx);
+        let len = self.valid_len.atomic_fetch_local(self.ctx);
         let end = match range.end_bound() {
             std::ops::Bound::Included(x) => *x + 1,
             std::ops::Bound::Excluded(x) => *x,
@@ -141,7 +163,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
     }
 
     pub fn span_remote(&self, range: impl RangeBounds<usize> + Clone, pe: PE) -> Box<[T]> {
-        let len = self.len.atomic_fetch(pe, self.ctx);
+        let len = self.valid_len.atomic_fetch(pe, self.ctx);
         let end = match range.end_bound() {
             std::ops::Bound::Included(x) => *x + 1,
             std::ops::Bound::Excluded(x) => *x,
@@ -164,7 +186,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
 
     pub fn replace(&mut self, idx: usize, x: T) {
         assert!(
-            self.len.atomic_fetch_local(self.ctx) > idx,
+            self.valid_len.atomic_fetch_local(self.ctx) > idx,
             "tried to replace out of bounds (len = {}, idx = {})",
             self.len(),
             idx
@@ -174,14 +196,14 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
 
     pub fn replace_remote(&mut self, idx: usize, x: T, pe: PE) {
         assert!(
-            self.len.atomic_fetch(pe, self.ctx) > idx,
+            self.valid_len.atomic_fetch(pe, self.ctx) > idx,
             "tried to replace out of bounds"
         );
         self.buf.put_single(idx, &MaybeUninit::new(x), pe, self.ctx);
     }
 
     pub fn replace_remote_many(&mut self, data: &[(usize, T)], pe: PE) {
-        let len = self.len.atomic_fetch(pe, self.ctx);
+        let len = self.valid_len.atomic_fetch(pe, self.ctx);
         assert!(
             data.iter().all(|(idx, _)| *idx < len),
             "index in replace_many_remote out of bounds"
@@ -196,14 +218,14 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
 
     pub fn index_unwrap(&self, idx: usize) -> T {
         assert!(
-            self.len.atomic_fetch_local(self.ctx) > idx,
+            self.valid_len.atomic_fetch_local(self.ctx) > idx,
             "index {idx} out of bounds"
         );
         unsafe { self.buf[idx].assume_init() }
     }
 
     pub fn index_remote(&self, idx: usize, pe: PE) -> Option<T> {
-        let remote_len = self.len.atomic_fetch(pe, self.ctx);
+        let remote_len = self.valid_len.atomic_fetch(pe, self.ctx);
         if remote_len <= idx {
             return None;
         }
@@ -226,7 +248,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
             std::ptr::copy_nonoverlapping(
                 self.buf.as_ptr(),
                 new_buf.as_mut_ptr(),
-                self.len.atomic_fetch_local(&self.ctx),
+                self.valid_len.atomic_fetch_local(&self.ctx),
             );
         }
         self.buf = new_buf;
@@ -251,7 +273,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
                 std::ptr::copy_nonoverlapping(
                     self.buf.as_ptr(),
                     new_buf.as_mut_ptr(),
-                    self.len.atomic_fetch_local(&self.ctx),
+                    self.valid_len.atomic_fetch_local(&self.ctx),
                 );
             }
             self.buf = new_buf;
@@ -269,7 +291,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
                 std::ptr::copy_nonoverlapping(
                     self.buf.as_ptr(),
                     new_buf.as_mut_ptr(),
-                    self.len.atomic_fetch_local(&self.ctx),
+                    self.valid_len.atomic_fetch_local(&self.ctx),
                 );
             }
             self.buf = new_buf;
@@ -287,12 +309,12 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         let upe = pe.raw();
         let _guard = self.lck[upe].lock();
         let remote = self.ctx.pe(upe);
-        let remote_len = self.len.atomic_fetch(pe, self.ctx);
+        let remote_len = self.mem_len.atomic_fetch_inc(pe, self.ctx);
         if remote_len >= self.buf.len() {
             Err(WouldRealloc)
         } else {
             remote.put_single(&mut self.buf, remote_len, &MaybeUninit::new(value));
-            self.len.atomic_inc(pe, self.ctx);
+            self.valid_len.atomic_inc(pe, self.ctx);
             self.ctx.quiet(());
             Ok(remote_len)
         }
@@ -304,7 +326,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
     }
 
     pub fn len(&self) -> usize {
-        self.len.atomic_fetch_local(self.ctx)
+        self.valid_len.atomic_fetch_local(self.ctx)
     }
 
     pub fn iter<'s>(&'s self) -> ShvecIter<'s, T> {
@@ -321,7 +343,7 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         unsafe {
             self.lck[self.ctx.my_pe().raw() as usize].lock_raw();
         }
-        let len = self.len.atomic_fetch_local(self.ctx);
+        let len = self.valid_len.atomic_fetch_local(self.ctx);
         if idx > len {
             panic!("idx out of bounds for insert");
         }
@@ -332,7 +354,8 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         let src = idx..(self.buf.len() - 1);
         self.buf.copy_within(src, idx + 1);
         self.buf[idx] = MaybeUninit::new(x);
-        self.len.atomic_inc(self.ctx.my_pe(), self.ctx);
+        self.mem_len.atomic_inc(self.ctx.my_pe(), self.ctx);
+        self.valid_len.atomic_inc(self.ctx.my_pe(), self.ctx);
         unsafe {
             self.lck[self.ctx.my_pe().raw() as usize].unlock_raw();
         }
@@ -374,26 +397,27 @@ impl<'ctx, T: Zeroable + Copy> Shvec<'ctx, T> {
         }
 
         let guard = self.lck[self.ctx.my_pe().raw()].lock();
+        self.mem_len.atomic_add(amt, self.ctx.my_pe(), self.ctx);
         // move all values after starting_from to the right
         self.buf.copy_within(starting_from.., starting_from + amt);
         // fill previous values with fill_with
         self.buf[starting_from..(starting_from + amt)].fill(MaybeUninit::new(fill_with));
         // adjust len
-        self.len.atomic_add(amt, self.ctx.my_pe(), self.ctx);
+        self.valid_len.atomic_add(amt, self.ctx.my_pe(), self.ctx);
         drop(guard);
 
         Ok(())
     }
 }
 
-pub struct ShvecIter<'vec, T: Zeroable + Copy> {
+pub struct ShvecIter<'vec, T: Shend> {
     len: usize,
     idx: usize,
     buf: &'vec Shvec<'vec, T>,
     _lock: ShmlockLock<'vec, 'vec>,
 }
 
-impl<'vec, T: Zeroable + Copy> Iterator for ShvecIter<'vec, T> {
+impl<'vec, T: Shend> Iterator for ShvecIter<'vec, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
