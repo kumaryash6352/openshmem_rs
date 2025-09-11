@@ -10,7 +10,7 @@ pub use openshmem_macros::Shend;
 /// such as integers, floats, bools, and chars, already implement Shend.
 /// If you have a type you want to read remotely, you can derive Shend through the proc-macro.
 /// The macro requires ALL types your type is made of must also implement Shend.
-pub unsafe trait Shend: Copy {}
+pub unsafe trait Shend: Clone {}
 
 unsafe impl Shend for u8 {}
 unsafe impl Shend for u16 {}

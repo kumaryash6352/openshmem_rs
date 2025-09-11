@@ -3,8 +3,8 @@ use std::{
     cell::UnsafeCell,
     ffi::c_void,
     fmt::Debug,
-    mem::{self, transmute, MaybeUninit},
-    ops::{Bound, Deref, DerefMut, RangeBounds},
+    mem::{self, transmute, ManuallyDrop, MaybeUninit},
+    ops::{Bound, Deref, DerefMut, Index, RangeBounds},
     ptr::NonNull,
 };
 
@@ -116,7 +116,11 @@ impl<'ctx> Shmallocator<'ctx> {
     ///
     /// Each PE will generate it's own elements. If you want to instead generate `len` elements
     /// in total, consider combining this with `Shbox::collect`
-    pub fn array_gen<T: Shend>(&'ctx self, mut f: impl FnMut(usize) -> T, len: usize) -> Shbox<'ctx, [T]> {
+    pub fn array_gen<T: Shend>(
+        &'ctx self,
+        mut f: impl FnMut(usize) -> T,
+        len: usize,
+    ) -> Shbox<'ctx, [T]> {
         let mut cap = self.shbox(len);
         cap.reduce_max(self.ctx);
         let mut vec = Box::new_zeroed_slice_in(*cap, self);
@@ -170,6 +174,10 @@ pub struct Shbox<'ctx, T: ?Sized> {
 }
 
 impl<'ctx, T: ?Sized> Shbox<'ctx, T> {
+    pub fn shptr<'s>(&'s self) -> Shptr<&'s T> {
+        Shptr { internal: &self.internal }
+    }
+
     /// Retrieve a reference to the underlying type.
     ///
     /// This is equivalent to `Deref::deref`'ing a `Shbox`.
@@ -251,6 +259,26 @@ impl<'ctx, T: ?Sized + Shend> Shbox<'ctx, T> {
 }
 
 impl<'ctx, T: Sized + Shend> Shbox<'ctx, [T]> {
+    pub fn slice<'s, R>(&'s self, range: R) -> Shptr<&[T]>
+    where
+        R: RangeBounds<usize> + std::slice::SliceIndex<[T], Output = [T]>,
+        for<'a> &'a [T]: Index<R>,
+    {
+        Shptr {
+            internal: &self.internal[range],
+        }
+    }
+
+    pub fn slice_mut<'s, R>(&'s mut self, range: R) -> Shptr<&'s mut [T]>
+    where
+        R: RangeBounds<usize> + std::slice::SliceIndex<[T], Output = [T]>,
+        for<'a> &'a mut [T]: Index<R>,
+    {
+        Shptr {
+            internal: &mut self.internal[range],
+        }
+    }
+
     /// Instantly replace the `offset..(offset + data.len())` elements of `shbox @ PE`
     /// with the elements from `data`.
     ///
@@ -465,7 +493,8 @@ impl<'ctx, T: Sized + Shend> Shbox<'ctx, [T]> {
         );
 
         let shm = ctx.shmallocator();
-        let mut shout: Box<[MaybeUninit<T>], _> = Box::new_uninit_slice_in(nelems_per_pe * ctx.n_pes(), &shm);
+        let mut shout: Box<[MaybeUninit<T>], _> =
+            Box::new_uninit_slice_in(nelems_per_pe * ctx.n_pes(), &shm);
 
         unsafe {
             shmem_alltoallmem(
@@ -482,7 +511,7 @@ impl<'ctx, T: Sized + Shend> Shbox<'ctx, [T]> {
             // but we need either:
             // 1. shmalloc is copy
             // 2. stored ref to shmalloc
-            internal: unsafe { transmute(shout) }
+            internal: unsafe { transmute(shout) },
         }
     }
 
@@ -494,7 +523,8 @@ impl<'ctx, T: Sized + Shend> Shbox<'ctx, [T]> {
         );
 
         let shm = ctx.shmallocator();
-        let mut shout: Box<[MaybeUninit<T>], _> = Box::new_uninit_slice_in(nelems_per_pe * ctx.n_pes(), &shm);
+        let mut shout: Box<[MaybeUninit<T>], _> =
+            Box::new_uninit_slice_in(nelems_per_pe * ctx.n_pes(), &shm);
 
         unsafe {
             shmem_alltoallmem(
@@ -506,7 +536,7 @@ impl<'ctx, T: Sized + Shend> Shbox<'ctx, [T]> {
         }
 
         let mut lout = Box::new_uninit_slice(nelems_per_pe * ctx.n_pes());
-        lout.copy_from_slice(&shout);
+        unsafe { std::ptr::copy_nonoverlapping(shout.as_ptr(), lout.as_mut_ptr(), nelems_per_pe * ctx.n_pes()); }
         unsafe { lout.assume_init() }
     }
 }
@@ -647,3 +677,28 @@ where
 }
 
 unsafe impl<'ctx, T: AtomicFetch> Sync for Shbox<'ctx, Atomic<T>> {}
+
+/// By construction, a reference to some memory on the symmetric heap.
+#[derive(Debug, Copy, Clone)]
+pub struct Shptr<R> {
+    internal: R,
+}
+
+impl<R> AsRef<R> for Shptr<R> {
+    fn as_ref(&self) -> &R {
+        &self.internal
+    }
+}
+
+impl<R> Deref for Shptr<R> {
+    type Target = R;
+
+    fn deref(&self) -> &Self::Target {
+        &self.internal
+    }
+}
+
+unsafe impl<T: AtomicFetch> Sync for Shptr<&Atomic<T>> {}
+
+//impl<'ctx, T: AtomicFetch> AtomicFetch for Shptr<'ctx, Atomic<T>> {
+//}

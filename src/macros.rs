@@ -181,16 +181,16 @@ macro_rules! impl_atomic_fetch {
     ($type:ty, $typename:ident) => {
         ::paste::paste! {
             impl AtomicFetch for $type {
-                fn atomic_fetch(shbox: &Shbox<'_, Atomic<Self>>, from: PE, _ctx: &ShmemCtx) -> $type {
+                fn atomic_fetch(shbox: Shptr<&'_ Atomic<Self>>, from: PE, _ctx: &ShmemCtx) -> $type {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch>](shbox.raw_ptr() as *const $type,
                                                                                         from.raw() as _) }
                 }
-                fn atomic_set(shbox: &Shbox<'_, Atomic<Self>>, new: $type, to: PE, _ctx: &ShmemCtx) {
+                fn atomic_set(shbox: Shptr<&'_ Atomic<Self>>, new: $type, to: PE, _ctx: &ShmemCtx) {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_set>](shbox.raw_ptr() as *mut $type,
                                                                                       new,
                                                                                       to.raw() as _); }
                 }
-                fn atomic_swap(shbox: &Shbox<'_, Atomic<Self>>, with: $type, to: PE, _ctx: &ShmemCtx) -> $type {
+                fn atomic_swap(shbox: Shptr<&'_ Atomic<Self>>, with: $type, to: PE, _ctx: &ShmemCtx) -> $type {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_swap>](shbox.raw_ptr() as *mut $type,
                                                                                        with,
                                                                                        to.raw() as _) }
@@ -209,26 +209,26 @@ macro_rules! impl_atomic_int {
     ($type:ty, $typename:ident) => {
         ::paste::paste! {
             impl AtomicInt for $type {
-                fn atomic_compare_swap(shbox: &Shbox<'_, Atomic<$type>>, if_equals: $type, then_set_to: $type, on: PE, _ctx: &ShmemCtx) -> $type {
+                fn atomic_compare_swap(shbox: Shptr<&'_ Atomic<$type>>, if_equals: $type, then_set_to: $type, on: PE, _ctx: &ShmemCtx) -> $type {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_compare_swap>](shbox.raw_ptr() as *mut $type,
                                                                                                if_equals,
                                                                                                then_set_to,
                                                                                                on.raw() as _) }
                 }
-                fn atomic_fetch_inc(shbox: &Shbox<'_, Atomic<$type>>, from: PE, _ctx: &ShmemCtx) -> $type {
+                fn atomic_fetch_inc(shbox: Shptr<&'_ Atomic<$type>>, from: PE, _ctx: &ShmemCtx) -> $type {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_inc>](shbox.raw_ptr() as *mut $type,
                                                                                             from.raw() as _) }
                 }
-                fn atomic_inc(shbox: &Shbox<'_, Atomic<$type>>, to: PE, _ctx: &ShmemCtx) {
+                fn atomic_inc(shbox: Shptr<&'_ Atomic<$type>>, to: PE, _ctx: &ShmemCtx) {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_inc>](shbox.raw_ptr() as *mut $type,
                                                                                       to.raw() as _); }
                 }
-                fn atomic_fetch_add(shbox: &Shbox<'_, Atomic<$type>>, plus: $type, from: PE, _ctx: &ShmemCtx) -> $type {
+                fn atomic_fetch_add(shbox: Shptr<&'_ Atomic<$type>>, plus: $type, from: PE, _ctx: &ShmemCtx) -> $type {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_add>](shbox.raw_ptr() as *mut $type,
                                                                                             plus,
                                                                                             from.raw() as _) }
                 }
-                fn atomic_add(shbox: &Shbox<'_, Atomic<$type>>, plus: $type, to: PE, _ctx: &ShmemCtx) {
+                fn atomic_add(shbox: Shptr<&'_ Atomic<$type>>, plus: $type, to: PE, _ctx: &ShmemCtx) {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_add>](shbox.raw_ptr() as *mut $type,
                                                                                       plus,
                                                                                       to.raw() as _); }
@@ -249,32 +249,32 @@ macro_rules! impl_atomic_bit {
     ($type:ty, $typename:ident) => {
         ::paste::paste! {
             impl AtomicBitwise for $type {
-                fn atomic_fetch_and(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
+                fn atomic_fetch_and(shbox: Shptr<&'_ Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_and>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                             with as _,
                                                                                             from.raw() as _) as _ }
                 }
-                fn atomic_and(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
+                fn atomic_and(shbox: Shptr<&'_ Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_and>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                       with as _,
                                                                                       to.raw() as _); }
                 }
-                fn atomic_fetch_or(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
+                fn atomic_fetch_or(shbox: Shptr<&'_ Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_or>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                             with as _,
                                                                                             from.raw() as _) as _ }
                 }
-                fn atomic_or(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
+                fn atomic_or(shbox: Shptr<&'_ Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_or>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                       with as _,
                                                                                       to.raw() as _); }
                 }
-                fn atomic_fetch_xor(shbox: &Shbox<'_, Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
+                fn atomic_fetch_xor(shbox: Shptr<&'_ Atomic<$type>>, with: $type, from: PE, _ctx: &ShmemCtx) -> $type {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_fetch_xor>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                             with as _,
                                                                                             from.raw() as _) as _ }
                 }
-                fn atomic_xor(shbox: &Shbox<'_, Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
+                fn atomic_xor(shbox: Shptr<&'_ Atomic<$type>>, with: $type, to: PE, _ctx: &ShmemCtx) {
                     unsafe { ::openshmem_sys::shmem::[<shmem_ $typename _atomic_xor>](shbox.raw_ptr() as *mut $type as *mut _,
                                                                                       with as _,
                                                                                       to.raw() as _); }
@@ -326,3 +326,4 @@ macro_rules! impl_shend_tuple {
         }
     };
 }
+
