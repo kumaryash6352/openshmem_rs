@@ -12,7 +12,7 @@ members = [
     "crates/openshmem-matrix",
     "crates/openshmem-vec",
     "bench/graphsearch",
-    "crates/openshmem-message-queue",
+#    "crates/openshmem-message-queue",
     "crates/openshmem-macros"
 ]
 exclude = [
