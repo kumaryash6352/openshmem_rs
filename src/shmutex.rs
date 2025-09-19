@@ -2,13 +2,15 @@ use std::ffi::c_long;
 
 use openshmem_sys::shmem::{shmem_clear_lock, shmem_set_lock};
 
-use crate::shmalloc::{Shbox, Shmallocator};
+use crate::{shmalloc::{Shbox, Shmallocator}, traits::Shend};
 
 /// An OpenSHMEM lock.
 ///
 /// Acquire the lock with `Shmlock::lock`, which returns a `ShmlockLock`.
 /// When the `ShmlockLock` is `drop`ed, the lock is released.
 pub struct Shmlock<'ctx>(Shbox<'ctx, c_long>);
+
+unsafe impl Shend for Shmlock<'_> {}
 
 /// A struct representing the lock on a `Shmlock`.
 /// So long as this struct lives, the `Shmlock` is locked.
