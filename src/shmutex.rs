@@ -8,6 +8,7 @@ use crate::{shmalloc::{Shbox, Shmallocator}, traits::Shend};
 ///
 /// Acquire the lock with `Shmlock::lock`, which returns a `ShmlockLock`.
 /// When the `ShmlockLock` is `drop`ed, the lock is released.
+#[derive(Clone)]
 pub struct Shmlock<'ctx>(Shbox<'ctx, c_long>);
 
 unsafe impl Shend for Shmlock<'_> {}
