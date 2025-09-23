@@ -4,6 +4,7 @@ use openshmem_rs::{
 };
 use openshmem_vec::Shvec;
 use rayon::prelude::*;
+use rustc_hash::FxHashSet;
 use std::{
     error::Error,
     fs::File,
@@ -79,11 +80,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect::<Vec<_>>();
     let searches = Shvec::from_iter(&ctx, &shm, searches.into_iter());
     let all_searches = searches.collect();
-    let mut search_cursor = shm.shbox(Atomic::new(0usize));
     println!("[PE {:>2}] parsed {} searchpairs", mype, all_searches.len());
     let mut distances = Vec::with_capacity(all_searches.len());
     println!("[PE {:>2}] starting searches!", mype);
-    for (from, to) in all_searches {
+    for (from, to) in searches.iter() {
         println!("[PE {mype:>2}]search #{:>4}: {from:>10} -> {to:>10}...", distances.len());
         distances.push(bfs(from, to, &adj, &ctx, &shm));
     }
@@ -99,9 +99,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         writeln!(
             out,
             "{} searches in {}s ({} searches per second)",
-            searches.len(),
+            all_searches.len(),
             start.elapsed().as_secs_f32(),
-            searches.len() as f32 / start.elapsed().as_secs_f32()
+            all_searches.len() as f32 / start.elapsed().as_secs_f32()
         )?;
     }
 
@@ -114,55 +114,9 @@ fn bfs(
     ctx: &ShmemCtx,
     shm: &Shmallocator<'_>,
 ) -> usize {
-    let mpe = ctx.my_pe().raw();
-    // strategy: remote read all elements from connects to
-    //           we recurse into all connected nodes where idx % n_pes == mpe
-    //           at each step, if a node has found the element we want, we send the signal.
-    //           if the signal, we exit and that node shares the path with all others
-    // TODO: new strat:
-    //           global atomic counter
-    //           each pe fetchincs the atomic counter
-    //           runs the fetchinc'd idx search pair
-    //           "work stealing"
-    let conn_buf = if adj.row_on_this_pe(from) {
-        let conns = adj.cols_on_row(from);
-        Shvec::from_iter(ctx, shm, conns.as_ref().into_iter().copied())
-    } else {
-        Shvec::from_iter(ctx, shm, [])
-    };
-    let first_conns = conn_buf.collect();
-    // println!("pe {}: first_conns = {first_conns:?}", mpe);
-    let mut len = shm.shbox(0);
-    // divide work
-    let mut my_targets = (*first_conns)
-        .into_iter()
-        .skip(mpe)
-        .step_by(ctx.n_pes())
-        .copied()
-        .collect::<Vec<_>>();
-    // "feels right" heuristic
-    // if my_targets.len() > 32767 {
-    //     my_targets.par_sort_unstable();
-    // } else {
-    // screw the heuristic we use par elsewhere too
-    my_targets.sort_unstable();
-    // }
-    let mut q1 = my_targets.clone();
-    let mut q2 = my_targets;
-    let mut flag = shm.shbox(0);
-    // println!("pe {}: start search for {to}...", ctx.my_pe().raw());
-    if mpe == 0 {
-        // TODO: update progress
-        // println!("start search for {to}");
-    }
-    *len = bfs_p(ctx, shm, &adj, to, &mut q1, &mut q2, &mut flag, 1);
-    ctx.barrier_all();
-    if mpe == 0 {
-        // println!("found {from}..[{} nodes]..to", *len - 1);
-    }
-
-    len.reduce_min(ctx);
-    *len
+    let mut conns = adj.cols_on_row(from).iter().copied().collect::<Vec<_>>();
+    let mut q2 = Vec::with_capacity(conns.len());
+    bfs_p(ctx, shm, &adj, to, &mut conns, &mut q2, &mut FxHashSet::default(), 1)
 }
 
 fn bfs_p(
@@ -172,38 +126,29 @@ fn bfs_p(
     target: usize,
     q_targets: &mut Vec<usize>,
     q_scratch: &mut Vec<usize>,
-    flag: &mut Shbox<'_, usize>,
+    seen: &mut FxHashSet<usize>,
     layers: usize,
 ) -> usize {
     if q_targets.binary_search(&target).is_ok() {
-        // println!(
-        //     "halting: i (pe {}) found a path in {layers}",
-        //     ctx.my_pe().raw()
-        // );
-        **flag = ctx.my_pe().raw() + 1;
-    }
-    //println!("pe {}: waiting on flag max...", ctx.my_pe().raw());
-    flag.reduce_max(ctx);
-    if **flag > 0 {
-        // println!("halting: pe {} found a path", **flag);
         layers
     } else {
-        // println!(
-        //     "pe {}: no pe has found target yet. recursing, q = {q:?}",
-        //     ctx.my_pe().raw()
-        // );
+        q_scratch.clear();
+        q_scratch.extend(q_targets.iter().map(|i| adj.cols_on_row(*i)).flatten());
+        q_scratch.par_sort_unstable();
+
         // prepare new queue
         let next_targets = q_targets
             .iter()
             .map(|idx| adj.cols_on_row(*idx))
+            .flatten()
+            .filter(|i| !seen.contains(i))
             .collect::<Vec<_>>();
         q_scratch.clear();
-        for t in next_targets {
-            q_scratch.extend_from_slice(&t);
-        }
+        q_scratch.extend(next_targets);
         q_scratch.par_sort_unstable();
         q_scratch.dedup();
-        if layers > 200 || q_scratch == q_targets {
+        q_scratch.iter().for_each(|i| { seen.insert(*i); });
+        if layers > 20000 || q_scratch == q_targets {
             println!(
                 "pe {}: i think i'm in an infinite loop: {q_targets:?}",
                 ctx.my_pe()
@@ -216,7 +161,7 @@ fn bfs_p(
             target,
             q_scratch,
             q_targets,
-            flag,
+            seen,
             layers + 1,
         )
     }

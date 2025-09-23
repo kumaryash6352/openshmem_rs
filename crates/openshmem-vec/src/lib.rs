@@ -417,7 +417,7 @@ pub struct ShvecIter<'vec, T: Shend> {
     _lock: ShmlockLock<'vec, 'vec>,
 }
 
-impl<'vec, T: Shend> Iterator for ShvecIter<'vec, T> {
+impl<'vec, T: Shend + Copy> Iterator for ShvecIter<'vec, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {

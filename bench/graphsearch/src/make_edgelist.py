@@ -7,10 +7,10 @@ import numpy as np
 
 np.random.seed(42)
 
-nodes = 32768
-n_searches = 256
-max_path_len = 32
-n_edges = ceil(pow(nodes, 2) / 8)
+nodes = 65536 * 2
+n_searches = 512
+max_path_len = 512
+n_edges = ceil(pow(nodes, 2) / 16) - n_searches * max_path_len
 
 print(f"generating {n_edges} edges...")
 edges = np.random.randint(0, nodes, size=(n_edges, 2))

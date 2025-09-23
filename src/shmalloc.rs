@@ -6,6 +6,7 @@ use std::{
     mem::{self, transmute, ManuallyDrop, MaybeUninit},
     ops::{Bound, Deref, DerefMut, Index, RangeBounds},
     ptr::NonNull,
+    slice::SliceIndex,
 };
 
 use openshmem_sys::shmem::{
@@ -135,8 +136,7 @@ impl<'ctx> Shmallocator<'ctx> {
 
     /// Constructs a shared mutable slice with at least `len` `t's.
     ///
-    /// Note that this type is technically unsound. I don't know how to fix that yet.
-    pub fn array<T: Shend>(&'ctx self, t: T, len: usize) -> Shbox<'ctx, [T]> {
+    pub fn array<T: Shend + Clone>(&'ctx self, t: T, len: usize) -> Shbox<'ctx, [T]> {
         let mut cap = self.shbox(len);
         cap.reduce_max(self.ctx);
         let mut vec = Box::new_zeroed_slice_in(*cap, self);
@@ -175,7 +175,9 @@ pub struct Shbox<'ctx, T: ?Sized> {
 
 impl<'ctx, T: ?Sized> Shbox<'ctx, T> {
     pub fn shptr<'s>(&'s self) -> Shptr<&'s T> {
-        Shptr { internal: &self.internal }
+        Shptr {
+            internal: &self.internal,
+        }
     }
 
     /// Retrieve a reference to the underlying type.
@@ -205,7 +207,7 @@ impl<'ctx, T: ?Sized> Shbox<'ctx, T> {
     // }
 }
 
-impl<'ctx, T: ?Sized + Shend> Shbox<'ctx, T> {
+impl<'ctx, T: Sized + Shend> Shbox<'ctx, T> {
     pub fn put(&mut self, data: &T, pe: PE, _ctx: &ShmemCtx) {
         unsafe {
             shmem_putmem(
@@ -259,20 +261,18 @@ impl<'ctx, T: ?Sized + Shend> Shbox<'ctx, T> {
 }
 
 impl<'ctx, T: Sized + Shend> Shbox<'ctx, [T]> {
-    pub fn slice<'s, R>(&'s self, range: R) -> Shptr<&[T]>
+    pub fn slice<R>(&self, range: R) -> Shptr<&<R as SliceIndex<[T]>>::Output>
     where
-        R: RangeBounds<usize> + std::slice::SliceIndex<[T], Output = [T]>,
-        for<'a> &'a [T]: Index<R>,
+        R: SliceIndex<[T]>,
     {
         Shptr {
             internal: &self.internal[range],
         }
     }
 
-    pub fn slice_mut<'s, R>(&'s mut self, range: R) -> Shptr<&'s mut [T]>
+    pub fn slice_mut<R>(&mut self, range: R) -> Shptr<&<R as SliceIndex<[T]>>::Output>
     where
-        R: RangeBounds<usize> + std::slice::SliceIndex<[T], Output = [T]>,
-        for<'a> &'a mut [T]: Index<R>,
+        R: SliceIndex<[T]>,
     {
         Shptr {
             internal: &mut self.internal[range],
@@ -536,7 +536,13 @@ impl<'ctx, T: Sized + Shend> Shbox<'ctx, [T]> {
         }
 
         let mut lout = Box::new_uninit_slice(nelems_per_pe * ctx.n_pes());
-        unsafe { std::ptr::copy_nonoverlapping(shout.as_ptr(), lout.as_mut_ptr(), nelems_per_pe * ctx.n_pes()); }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                shout.as_ptr(),
+                lout.as_mut_ptr(),
+                nelems_per_pe * ctx.n_pes(),
+            );
+        }
         unsafe { lout.assume_init() }
     }
 }
@@ -699,6 +705,12 @@ impl<R> Deref for Shptr<R> {
 }
 
 unsafe impl<T: AtomicFetch> Sync for Shptr<&Atomic<T>> {}
+
+impl<R> Shptr<&[R]> {
+    pub fn iter(&self) -> impl Iterator<Item = Shptr<&R>> {
+        self.internal.iter().map(|r| Shptr { internal: r })
+    }
+}
 
 //impl<'ctx, T: AtomicFetch> AtomicFetch for Shptr<'ctx, Atomic<T>> {
 //}

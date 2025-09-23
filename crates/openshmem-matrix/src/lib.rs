@@ -4,7 +4,7 @@ use rayon::prelude::*;
 
 use openshmem_rs::{
     shmalloc::{Shbox, Shmallocator},
-    Pod, ShmemCtx, Zeroable, PE,
+    ShmemCtx, PE, traits::Shend
 };
 use openshmem_vec::{Shvec, WouldRealloc};
 
@@ -30,7 +30,7 @@ pub enum Either<L: Debug, R: Debug> {
 #[derive(Debug)]
 pub struct RowOnDifferentPe;
 
-pub struct CrsMatrix<'ctx, T: Pod + Clone> {
+pub struct CrsMatrix<'ctx, T: Shend + Clone> {
     /// Rows in the matrix. By construction, identical across all PEs.
     rows: usize,
     /// Cols in the matrix. By construction, identical across all PEs.
@@ -51,7 +51,7 @@ pub struct CrsMatrix<'ctx, T: Pod + Clone> {
     row_ptrs: Shbox<'ctx, [usize]>,
 }
 
-impl<'ctx, T: Zeroable + Send + Copy + std::fmt::Debug + Pod> CrsMatrix<'ctx, T> {
+impl<'ctx, T: Shend + Send + Copy + std::fmt::Debug> CrsMatrix<'ctx, T> {
     pub fn new(
         rows: usize,
         cols: usize,

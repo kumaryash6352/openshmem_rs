@@ -313,6 +313,27 @@ impl<'ctx, T: AtomicFetch> Shbox<'ctx, Atomic<T>> {
         T::atomic_swap(self.shptr(), new_value, pe, ctx)
     }
 }
+impl<'ctx, T: AtomicFetch> Shptr<&'_ Atomic<T>> {
+    /// Fetch the value this atomic represents from another PE, or potentially this one.
+    pub fn atomic_fetch_local(&self, ctx: &'ctx ShmemCtx) -> T {
+        T::atomic_fetch(*self, ctx.my_pe(), ctx)
+    }
+
+    /// Fetch the value this atomic represents from another PE, or potentially this one.
+    pub fn atomic_fetch(&self, pe: PE, ctx: &'ctx ShmemCtx) -> T {
+        T::atomic_fetch(*self, pe, ctx)
+    }
+
+    /// Set the value this atomic represents on another PE, or potentially this one.
+    pub fn atomic_set(&self, new_value: T, pe: PE, ctx: &'ctx ShmemCtx) {
+        T::atomic_set(*self, new_value, pe, ctx);
+    }
+
+    /// Swap the value this atomic represents on another PE, or potentially this one, and return their value
+    pub fn atomic_swap(&self, new_value: T, pe: PE, ctx: &'ctx ShmemCtx) -> T {
+        T::atomic_swap(*self, new_value, pe, ctx)
+    }
+}
 
 impl<'ctx, T: AtomicInt> Shbox<'ctx, Atomic<T>> {
     /// Fetch the value this atomic represents from another PE, or potentially this one.
@@ -347,6 +368,39 @@ impl<'ctx, T: AtomicInt> Shbox<'ctx, Atomic<T>> {
         T::atomic_compare_swap(self.shptr(), if_equals, then_set_to, pe, ctx)
     }
 }
+impl<'ctx, T: AtomicInt> Shptr<&'_ Atomic<T>> {
+    /// Fetch the value this atomic represents from another PE, or potentially this one.
+    pub fn atomic_inc(&self, pe: PE, ctx: &'ctx ShmemCtx) {
+        T::atomic_inc(*self, pe, ctx)
+    }
+
+    /// Fetch the value this atomic represents from another PE, or potentially this one, then increment the remote value.
+    pub fn atomic_fetch_inc(&self, pe: PE, ctx: &'ctx ShmemCtx) -> T {
+        T::atomic_fetch_inc(*self, pe, ctx)
+    }
+
+    /// Fetch the value this atomic represents from another PE, or potentially this one.
+    pub fn atomic_add(&self, plus: T, pe: PE, ctx: &'ctx ShmemCtx) {
+        T::atomic_add(*self, plus, pe, ctx);
+    }
+
+    /// Fetch the value this atomic represents from another PE, or potentially this one.
+    pub fn atomic_fetch_add(&self, plus: T, pe: PE, ctx: &'ctx ShmemCtx) -> T {
+        T::atomic_fetch_add(*self, plus, pe, ctx)
+    }
+
+    /// Compare the remote value to `if_equals`. If the values are equal, set the remote value to `then_set_to`.
+    /// Return the value pre-operation.
+    pub fn atomic_compare_swap(
+        &self,
+        if_equals: T,
+        then_set_to: T,
+        pe: PE,
+        ctx: &'ctx ShmemCtx,
+    ) -> T {
+        T::atomic_compare_swap(*self, if_equals, then_set_to, pe, ctx)
+    }
+}
 
 impl<'ctx, T: AtomicBitwise> Shbox<'ctx, Atomic<T>> {
     /// And the value of this atomic on the given PE.
@@ -374,5 +428,33 @@ impl<'ctx, T: AtomicBitwise> Shbox<'ctx, Atomic<T>> {
     /// Xor the value of this atomic on the given PE, and fetch the value pre-operation.
     pub fn atomic_fetch_xor(&self, with: T, pe: PE, ctx: &'ctx ShmemCtx) -> T {
         T::atomic_fetch_xor(self.shptr(), with, pe, ctx)
+    }
+}
+impl<'ctx, T: AtomicBitwise> Shptr<&'ctx Atomic<T>> {
+    /// And the value of this atomic on the given PE.
+    pub fn atomic_and(&self, with: T, pe: PE, ctx: &'ctx ShmemCtx) {
+        T::atomic_and(*self, with, pe, ctx)
+    }
+    /// And the value of this atomic on the given PE, and fetch the value pre-operation.
+    pub fn atomic_fetch_and(&self, with: T, pe: PE, ctx: &'ctx ShmemCtx) -> T {
+        T::atomic_fetch_and(*self, with, pe, ctx)
+    }
+
+    /// Or the value of this atomic on the given PE.
+    pub fn atomic_or(&self, with: T, pe: PE, ctx: &'ctx ShmemCtx) {
+        T::atomic_or(*self, with, pe, ctx)
+    }
+    /// Or the value of this atomic on the given PE, and fetch the value pre-operation.
+    pub fn atomic_fetch_or(&self, with: T, pe: PE, ctx: &'ctx ShmemCtx) -> T {
+        T::atomic_fetch_or(*self, with, pe, ctx)
+    }
+
+    /// Xor the value of this atomic on the given PE.
+    pub fn atomic_xor(&self, with: T, pe: PE, ctx: &'ctx ShmemCtx) {
+        T::atomic_xor(*self, with, pe, ctx)
+    }
+    /// Xor the value of this atomic on the given PE, and fetch the value pre-operation.
+    pub fn atomic_fetch_xor(&self, with: T, pe: PE, ctx: &'ctx ShmemCtx) -> T {
+        T::atomic_fetch_xor(*self, with, pe, ctx)
     }
 }
