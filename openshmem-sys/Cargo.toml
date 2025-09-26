@@ -9,6 +9,7 @@ repository = "https://github.com/kumaryash6352/openshmem-rs"
 
 [build-dependencies]
 bindgen = "0.69.4"
+pkg-config = "0.3.32"
 
 [features]
 default = ["shmemx"]

@@ -1,11 +1,21 @@
 use std::path::PathBuf;
+// use pkg_config::probe_library;
 
 fn main() {
-    let install_dir = if std::env::var("DOCS_RS").is_ok() {
-        std::env::var("CARGO_MANIFEST_DIR").unwrap() + "/osss-ucx"
+    // let inc_dir = if std::env::var("DOCS_RS").is_ok() {
+    //     Some(std::env::var("CARGO_MANIFEST_DIR").unwrap() + "/osss-ucx/include")
+    // } else {
+    //     std::env::var("SHMEM_INSTALL_DIR").or_else(|_| {
+    //         let base_conf = pkg_config::Config::new().atleast_version("1.5");
+    //         let known = ["sandia-openshmem", ]
+    //     })
+    // };
+    let inc_dir = if std::env::var("DOCS_RS").is_ok() {
+        Some(std::env::var("CARGO_MANIFEST_DIR").unwrap() + "/osss-ucx/include")
     } else {
-        std::env::var("SHMEM_INSTALL_DIR").expect("SHMEM_INSTALL_DIR to be provided!")
+        std::env::var("SHMEM_INSTALL_DIR").ok()
     };
+    let install_dir = inc_dir.expect("SHMEM_INSTALL_DIR must be provided!");
     println!("cargo:rustc-link-search={install_dir}/lib");
     println!("cargo:rustc-link-lib=sma");
     println!("cargo:rustc-link-lib=pmi_simple");

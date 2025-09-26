@@ -173,6 +173,9 @@ pub struct Shbox<'ctx, T: ?Sized> {
     internal: Box<T, &'ctx Shmallocator<'ctx>>,
 }
 
+unsafe impl<T: Shend> Sync for Shbox<'_, T> {}
+unsafe impl<T: Shend> Sync for Shbox<'_, [T]> {}
+
 impl<'ctx, T: ?Sized> Shbox<'ctx, T> {
     pub fn shptr<'s>(&'s self) -> Shptr<&'s T> {
         Shptr {
@@ -681,8 +684,6 @@ where
         self.buf.as_mut()
     }
 }
-
-unsafe impl<'ctx, T: AtomicFetch> Sync for Shbox<'ctx, Atomic<T>> {}
 
 /// By construction, a reference to some memory on the symmetric heap.
 #[derive(Debug, Copy, Clone)]

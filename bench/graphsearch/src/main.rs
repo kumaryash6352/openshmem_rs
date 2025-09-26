@@ -138,8 +138,9 @@ fn bfs_p(
 
         // prepare new queue
         let next_targets = q_targets
-            .iter()
-            .map(|idx| adj.cols_on_row(*idx))
+            .as_slice() // rayon doesn't yet support custom allocs
+            .into_par_iter()
+            .map(|idx| adj.cols_on_row(*idx).to_vec())
             .flatten()
             .filter(|i| !seen.contains(i))
             .collect::<Vec<_>>();
