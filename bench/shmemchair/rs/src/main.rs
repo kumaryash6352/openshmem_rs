@@ -114,7 +114,7 @@ fn bench_atomic_inc(ntimes: usize, ctx: &ShmemCtx) {
     let start = Instant::now();
 
     for _ in 0..ntimes {
-        black_box(dest.atomic_inc(target_pe, ctx));
+        dest.atomic_inc(target_pe, ctx);
     }
     unsafe { openshmem_rs::ffi::shmem_quiet(); }
     ctx.barrier_all();
@@ -140,7 +140,7 @@ fn bench_atomic_cmp_swp(ntimes: usize, ctx: &ShmemCtx) {
     let start = Instant::now();
 
     for _ in 0..ntimes {
-        black_box(dest.atomic_compare_swap(0, swp_with, target_pe, ctx));
+        dest.atomic_compare_swap(0, swp_with, target_pe, ctx);
     }
     unsafe { openshmem_rs::ffi::shmem_quiet(); }
     ctx.barrier_all();
@@ -163,7 +163,7 @@ fn bench_atomic_fetch(ntimes: usize, ctx: &ShmemCtx) {
     let start = Instant::now();
 
     for _ in 0..ntimes {
-        black_box(dest.atomic_fetch(target_pe, ctx));
+        dest.atomic_fetch(target_pe, ctx);
     }
     unsafe { openshmem_rs::ffi::shmem_quiet(); }
     ctx.barrier_all();
@@ -186,9 +186,8 @@ fn bench_atomic_add(ntimes: usize, ctx: &ShmemCtx) {
     let start = Instant::now();
 
     for _ in 0..ntimes {
-        black_box(dest.atomic_add(1, target_pe, ctx));
+        dest.atomic_add(1, target_pe, ctx);
     }
-    unsafe { openshmem_rs::ffi::shmem_quiet(); }
     ctx.barrier_all();
 
     let elapsed = start.elapsed().as_micros() as f32;
@@ -214,13 +213,11 @@ fn bench_put(ntimes: usize, sizes: Vec<usize>, ctx: &ShmemCtx) {
     let access = ctx.pe(0);
     for size in sizes {
         let data = &src[0..size];
-        unsafe { openshmem_rs::ffi::shmem_quiet(); }
         ctx.barrier_all();
         let start = Instant::now();
         for _ in 0..ntimes {
-            black_box(dest.put_many(0, data, PE(target_pe as _), ctx));
+            dest.put_many(0, data, PE(target_pe as _), ctx);
         }
-        unsafe { openshmem_rs::ffi::shmem_quiet(); }
         ctx.barrier_all();
         times.push((size, start.elapsed().as_secs_f32()));
     }
@@ -248,13 +245,11 @@ fn bench_get(ntimes: usize, sizes: Vec<usize>, ctx: &ShmemCtx) {
 
     let access = ctx.pe(0);
     for size in sizes {
-        unsafe { openshmem_rs::ffi::shmem_quiet(); }
         ctx.barrier_all();
         let start = Instant::now();
         for _ in 0..ntimes {
-            black_box(src.get_many_into(PE(target_pe as _), 0..size, &mut dest, ctx));
+            src.get_many_into(PE(target_pe as _), 0..size, &mut dest, ctx);
         }
-        unsafe { openshmem_rs::ffi::shmem_quiet(); }
         ctx.barrier_all();
         times.push((size, start.elapsed().as_secs_f32()));
     }
@@ -275,7 +270,7 @@ fn bench_barrier(ntimes: usize, ctx: &ShmemCtx) {
     let start = Instant::now();
 
     for _ in 0..ntimes {
-        black_box(ctx.barrier_all());
+        ctx.barrier_all();
     }
 
     let elapsed = start.elapsed().as_micros() as f32;
