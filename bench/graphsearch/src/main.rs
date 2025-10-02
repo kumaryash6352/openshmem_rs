@@ -6,6 +6,7 @@ use openshmem_vec::Shvec;
 use rayon::prelude::*;
 use rustc_hash::FxHashSet;
 use std::{
+    env,
     error::Error,
     fs::File,
     io::{BufRead as _, BufReader, Write},
@@ -13,7 +14,16 @@ use std::{
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
-    println!("Hello, world!");
+    eprintln!("Hello, world!");
+
+    // Parse CLI arguments
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 3 {
+        eprintln!("Usage: {} <searchlist> <edgelist>", args[0]);
+        std::process::exit(1);
+    }
+    let searchlist_path = &args[1];
+    let edgelist_path = &args[2];
 
     let ctx = ShmemCtx::init().unwrap();
     let start = Instant::now();
@@ -21,14 +31,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let npes = ctx.n_pes();
     let mype = ctx.my_pe().raw();
 
-    println!("[PE {:>2}] start reading edgelist", mype);
-    let input = BufReader::new(File::open("edgelist")?)
+    eprintln!("[PE {:>2}] start reading edgelist", mype);
+    let input = BufReader::new(File::open(edgelist_path)?)
         .lines()
         .collect::<Result<Vec<String>, std::io::Error>>()?;
     let elines_per_pe = input.len().div_ceil(npes);
-    println!("[PE {:>2}] read edgelist", mype);
+    eprintln!("[PE {:>2}] read edgelist", mype);
 
-    println!("[PE {:>2}] start parse edgelist", mype);
+    eprintln!("[PE {:>2}] start parse edgelist", mype);
     let edges = input
         .par_iter()
         .skip(mype * elines_per_pe)
@@ -36,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .filter_map(|s| parse_edge(&s))
         .collect::<Vec<_>>();
     // let edges = Shvec::from_iter(&ctx, &shm, edges);
-    println!(
+    eprintln!(
         "[PE {:>2}] parsed {} edges from edgelist",
         mype,
         edges.len()
@@ -51,10 +61,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     max.reduce_max(&ctx);
     if mype == 0 {
-        println!("[PE {:>2}] adj matrix dimensions: {}x{}", mype, *max, *max);
+        eprintln!("[PE {:>2}] adj matrix dimensions: {}x{}", mype, *max, *max);
     }
 
-    println!(
+    eprintln!(
         "[PE {:>2}] storing {} edges into adj matrix",
         mype,
         edges.len()
@@ -65,10 +75,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect::<Vec<_>>();
     let adj = CrsMatrix::from_coo(*max + 1, *max + 1, &edges, &ctx, &shm);
 
-    println!("[PE {:>2}] global edges: {}", mype, adj.nnz());
+    eprintln!("[PE {:>2}] global edges: {}", mype, adj.nnz());
 
-    println!("[PE {:>2}] parsing searchlist...", mype);
-    let search_input = BufReader::new(File::open("searchlist")?)
+    eprintln!("[PE {:>2}] parsing searchlist...", mype);
+    let search_input = BufReader::new(File::open(searchlist_path)?)
         .lines()
         .collect::<Result<Vec<String>, std::io::Error>>()?;
     let slines_per_pe = search_input.len().div_ceil(npes);
@@ -80,29 +90,31 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect::<Vec<_>>();
     let searches = Shvec::from_iter(&ctx, &shm, searches.into_iter());
     let all_searches = searches.collect();
-    println!("[PE {:>2}] parsed {} searchpairs", mype, all_searches.len());
+    eprintln!("[PE {:>2}] parsed {} searchpairs", mype, all_searches.len());
     let mut distances = Vec::with_capacity(all_searches.len());
-    println!("[PE {:>2}] starting searches!", mype);
+    eprintln!("[PE {:>2}] starting searches!", mype);
     for (from, to) in searches.iter() {
-        println!("[PE {mype:>2}]search #{:>4}: {from:>10} -> {to:>10}...", distances.len());
+        eprintln!("[PE {mype:>2}]search #{:>4}: {from:>10} -> {to:>10}...", distances.len());
         distances.push(bfs(from, to, &adj, &ctx, &shm));
     }
 
     if mype == 0 {
-        println!("max distance: {}", distances.iter().max().unwrap());
-        println!("min distance: {}", distances.iter().min().unwrap());
-        println!(
+        eprintln!("max distance: {}", distances.iter().max().unwrap());
+        eprintln!("min distance: {}", distances.iter().min().unwrap());
+        eprintln!(
             "avg distance: {}",
             distances.iter().sum::<usize>() as f32 / distances.len() as f32
         );
+        let searches_per_second = all_searches.len() as f32 / start.elapsed().as_secs_f32();
         let mut out = File::create("searchtime")?;
         writeln!(
             out,
             "{} searches in {}s ({} searches per second)",
             all_searches.len(),
             start.elapsed().as_secs_f32(),
-            all_searches.len() as f32 / start.elapsed().as_secs_f32()
+            searches_per_second
         )?;
+        println!("{}", searches_per_second);
     }
 
     Ok(())
@@ -150,7 +162,7 @@ fn bfs_p(
         q_scratch.dedup();
         q_scratch.iter().for_each(|i| { seen.insert(*i); });
         if layers > 20000 || q_scratch == q_targets {
-            println!(
+            eprintln!(
                 "pe {}: i think i'm in an infinite loop: {q_targets:?}",
                 ctx.my_pe()
             );

@@ -6,6 +6,7 @@
 #include <sys/time.h>
 #include <shmem.h>
 
+#define DBG 1
 #define MAX_LINE_LENGTH 1024
 #define MAX_SEARCH_DEPTH 20000
 
@@ -377,7 +378,9 @@ size_t bfs(const crs_matrix_t* matrix, size_t from, size_t to) {
         // Check for infinite loop
         if (layers > 20000 || (q_scratch.length == q_targets.length && 
             memcmp(q_scratch.data, q_targets.data, q_targets.length * sizeof(size_t)) == 0)) {
-            printf("PE %d: BFS infinite loop detected at layer %zu\n", shmem_my_pe(), layers);
+#ifdef DBG
+            fprintf(stderr, "PE %d: BFS infinite loop detected at layer %zu\n", shmem_my_pe(), layers);
+#endif
             break;
         }
         
@@ -399,17 +402,30 @@ size_t bfs(const crs_matrix_t* matrix, size_t from, size_t to) {
 int main(int argc, char* argv[]) {
     shmem_init();
     
+    // Check command line arguments
+    if (argc != 3) {
+        if (shmem_my_pe() == 0) {
+            fprintf(stderr, "Usage: %s <searchlist> <edgelist>\n", argv[0]);
+        }
+        shmem_global_exit(1);
+    }
+    
+    const char* searchlist_file = argv[1];
+    const char* edgelist_file = argv[2];
+    
     double start_time = get_time();
     int mpe = shmem_my_pe();
     int npes = shmem_n_pes();
-    
-    printf("Hello, world!\n");
-    printf("[PE %2d] start reading edgelist\n", mpe);
+
+#ifdef DBG
+    fprintf(stderr, "Hello, world!\n");
+    fprintf(stderr, "[PE %2d] start reading edgelist: %s\n", mpe, edgelist_file);
+#endif
     
     // Read edgelist file
-    FILE* file = fopen("edgelist", "r");
+    FILE* file = fopen(edgelist_file, "r");
     if (!file) {
-        printf("PE %d: Cannot open edgelist file\n", mpe);
+        fprintf(stderr, "PE %d: Cannot open edgelist file: %s\n", mpe, edgelist_file);
         shmem_global_exit(1);
     }
     
@@ -420,9 +436,11 @@ int main(int argc, char* argv[]) {
         total_lines++;
     }
     rewind(file);
-    
-    printf("[PE %2d] read edgelist\n", mpe);
-    printf("[PE %2d] start parse edgelist\n", mpe);
+
+#ifdef DBG
+    fprintf(stderr, "[PE %2d] read edgelist\n", mpe);
+    fprintf(stderr, "[PE %2d] start parse edgelist\n", mpe);
+#endif
     
     // Calculate lines per PE
     size_t lines_per_pe = (total_lines + npes - 1) / npes;
@@ -452,45 +470,41 @@ int main(int argc, char* argv[]) {
         current_line++;
     }
     fclose(file);
-    
-    printf("[PE %2d] parsed %zu edges from edgelist\n", mpe, edge_count);
+
+#ifdef DBG
+    fprintf(stderr, "[PE %2d] parsed %zu edges from edgelist\n", mpe, edge_count);
+#endif
     
     // Find global maximum vertex
     size_t* global_max_ptr = shmem_malloc(sizeof(size_t));
-    size_t* work_array = shmem_malloc(SHMEM_REDUCE_MIN_WRKDATA_SIZE * sizeof(size_t));
-    long* sync_array = shmem_malloc(SHMEM_REDUCE_SYNC_SIZE * sizeof(long));
-    
-    for (int i = 0; i < SHMEM_REDUCE_SYNC_SIZE; i++) {
-        sync_array[i] = SHMEM_SYNC_VALUE;
-    }
     
     shmem_barrier_all();
     shmem_size_max_reduce(SHMEM_TEAM_WORLD, global_max_ptr, &local_max, 1);
     size_t global_max = *global_max_ptr;
     
     if (mpe == 0) {
-        printf("[PE %2d] adj matrix dimensions: %zux%zu\n", mpe, global_max + 1, global_max + 1);
+        fprintf(stderr, "[PE %2d] adj matrix dimensions: %zux%zu\n", mpe, global_max + 1, global_max + 1);
     }
     
-    printf("[PE %2d] storing %zu edges into adj matrix\n", mpe, edge_count);
+    fprintf(stderr, "[PE %2d] storing %zu edges into adj matrix\n", mpe, edge_count);
     
     // Create matrix from edges
     crs_matrix_t* matrix = create_matrix_from_edges(edges, edge_count, global_max);
     free(edges);
     
     if (!matrix) {
-        printf("PE %d: Failed to create matrix\n", mpe);
+        fprintf(stderr, "PE %d: Failed to create matrix\n", mpe);
         shmem_global_exit(1);
     }
     
-    printf("[PE %2d] global edges: %zu\n", mpe, matrix->total_nnz);
+    fprintf(stderr, "[PE %2d] global edges: %zu\n", mpe, matrix->total_nnz);
     
-    printf("[PE %2d] parsing searchlist...\n", mpe);
+    fprintf(stderr, "[PE %2d] parsing searchlist: %s...\n", mpe, searchlist_file);
     
     // Read searchlist file
-    file = fopen("searchlist", "r");
+    file = fopen(searchlist_file, "r");
     if (!file) {
-        printf("PE %d: Cannot open searchlist file\n", mpe);
+        fprintf(stderr, "PE %d: Cannot open searchlist file: %s\n", mpe, searchlist_file);
         shmem_global_exit(1);
     }
     
@@ -522,14 +536,14 @@ int main(int argc, char* argv[]) {
     }
     fclose(file);
     
-    printf("[PE %2d] parsed %zu searchpairs\n", mpe, total_search_lines);
+    fprintf(stderr, "[PE %2d] parsed %zu searchpairs\n", mpe, total_search_lines);
     
     // Perform BFS searches
     size_t* distances = malloc(search_count * sizeof(size_t));
-    printf("[PE %2d] starting searches!\n", mpe);
+    fprintf(stderr, "[PE %2d] starting searches!\n", mpe);
     
     for (size_t i = 0; i < search_count; i++) {
-        printf("[PE %2d]search #%4zu: %10zu -> %10zu...\n", mpe, i, searches[i].from, searches[i].to);
+        fprintf(stderr, "[PE %2d]search #%4zu: %10zu -> %10zu...\n", mpe, i, searches[i].from, searches[i].to);
         distances[i] = bfs(matrix, searches[i].from, searches[i].to);
     }
     
@@ -549,19 +563,9 @@ int main(int argc, char* argv[]) {
             }
         }
         
-        if (valid_searches > 0) {
-            printf("max distance: %zu\n", max_dist);
-            printf("min distance: %zu\n", min_dist);
-            printf("avg distance: %.2f\n", total_dist / valid_searches);
-        }
-        
         double elapsed = get_time() - start_time;
-        FILE* out = fopen("searchtime", "w");
-        if (out) {
-            fprintf(out, "%zu searches in %.3fs (%.3f searches per second)\n", 
-                   total_search_lines, elapsed, total_search_lines / elapsed);
-            fclose(out);
-        }
+        fprintf(stderr, "%zu searches in %.3fs\n", total_search_lines, elapsed);
+        printf("%.3f\n", total_search_lines / elapsed);
     }
     
     // Cleanup
@@ -569,8 +573,6 @@ int main(int argc, char* argv[]) {
     free(distances);
     free_matrix(matrix);
     shmem_free(global_max_ptr);
-    shmem_free(work_array);
-    shmem_free(sync_array);
     
     shmem_finalize();
     return 0;
