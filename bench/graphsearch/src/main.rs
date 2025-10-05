@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     eprintln!("[PE {:>2}] starting searches!", mype);
     for (from, to) in searches {
         eprintln!("[PE {mype:>2}]search #{:>4}: {from:>10} -> {to:>10}...", distances.len());
-        distances.push(bfs(*from, *to, &adj, &ctx, &shm));
+        distances.push(bfs(from, to, &adj, &ctx, &shm));
     }
 
     ctx.barrier_all();
