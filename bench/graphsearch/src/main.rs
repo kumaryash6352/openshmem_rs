@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     
     // don't need the shvec overhead anymore
     let searches = all_searches.iter().collect::<Vec<_>>();
-    let mut distances = Vec::with_capacity(local_searches.len());
+    let mut distances = Vec::with_capacity(all_searches.len());
     eprintln!("[PE {:>2}] starting searches!", mype);
     for (from, to) in searches.iter().skip(mype * slines_per_pe).take(slines_per_pe) {
         eprintln!("[PE {mype:>2}]search #{:>4}: {from:>10} -> {to:>10}...", distances.len());
