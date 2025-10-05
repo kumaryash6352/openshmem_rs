@@ -270,7 +270,7 @@ int edge_compare(const void* a, const void* b) {
     return 0;
 }
 
-// Create distributed CRS matrix from edges
+// Simpler distributed matrix creation following Rust approach
 crs_matrix_t* create_matrix_from_edges(edge_t* local_edges, size_t local_edge_count, size_t max_vertex) {
     int mpe = shmem_my_pe();
     int npes = shmem_n_pes();
@@ -287,170 +287,190 @@ crs_matrix_t* create_matrix_from_edges(edge_t* local_edges, size_t local_edge_co
     matrix->rows_per_pe = rows_per_pe;
     matrix->npes = npes;
     matrix->mpe = mpe;
+    matrix->local_rows = rows_per_pe;
     
-    // Calculate actual rows for this PE using interleaved distribution
-    // Count how many rows this PE will own
-    matrix->local_rows = 0;
-    for (size_t row = 0; row < matrix_size; row++) {
-        if (row_to_pe(row, npes) == mpe) {
-            matrix->local_rows++;
+    // Distribute edges using same approach as Rust: send edges to their target PEs
+    // Step 1: Create outboxes for each PE
+    edge_t** outboxes = malloc(npes * sizeof(edge_t*));
+    size_t* outbox_counts = calloc(npes, sizeof(size_t));
+    size_t* outbox_capacities = malloc(npes * sizeof(size_t));
+    
+    if (!outboxes || !outbox_counts || !outbox_capacities) {
+        free(matrix);
+        if (outboxes) free(outboxes);
+        if (outbox_counts) free(outbox_counts);
+        if (outbox_capacities) free(outbox_capacities);
+        return NULL;
+    }
+    
+    size_t avg_cap = (local_edge_count / npes) + 1;
+    for (int i = 0; i < npes; i++) {
+        outbox_capacities[i] = avg_cap;
+        outboxes[i] = malloc(avg_cap * sizeof(edge_t));
+        if (!outboxes[i]) {
+            // Cleanup on failure
+            for (int j = 0; j < i; j++) {
+                free(outboxes[j]);
+            }
+            free(outboxes);
+            free(outbox_counts);
+            free(outbox_capacities);
+            free(matrix);
+            return NULL;
         }
     }
     
-    // Collect all edges to distribute them properly
-    size_t* all_edge_counts = shmem_malloc(npes * sizeof(size_t));
-    if (!all_edge_counts) {
+    // Distribute local edges to appropriate outboxes
+    for (size_t i = 0; i < local_edge_count; i++) {
+        int target_pe = row_to_pe(local_edges[i].row, npes);
+        
+        // Resize outbox if needed
+        if (outbox_counts[target_pe] >= outbox_capacities[target_pe]) {
+            outbox_capacities[target_pe] *= 2;
+            outboxes[target_pe] = realloc(outboxes[target_pe], 
+                outbox_capacities[target_pe] * sizeof(edge_t));
+        }
+        
+        outboxes[target_pe][outbox_counts[target_pe]++] = local_edges[i];
+    }
+    
+    // Collect my incoming edges from all PEs
+    size_t_vec_t my_edges;
+    if (!vec_init(&my_edges, local_edge_count)) {
+        // Cleanup
+        for (int i = 0; i < npes; i++) {
+            free(outboxes[i]);
+        }
+        free(outboxes);
+        free(outbox_counts);
+        free(outbox_capacities);
         free(matrix);
         return NULL;
     }
     
-    // Share edge counts
-    shmem_barrier_all();
-    for (int pe = 0; pe < npes; pe++) {
-        shmem_size_p(&all_edge_counts[pe], local_edge_count, pe);
-    }
-    shmem_barrier_all();
-    
-    // Calculate total edges
-    size_t total_edges = 0;
+    // Find maximum outbox size across all PEs for symmetric allocation
+    size_t max_outbox = 0;
     for (int i = 0; i < npes; i++) {
-        total_edges += all_edge_counts[i];
-    }
-    
-    // Collect all edges on PE 0
-    edge_t* all_edges = NULL;
-    if (mpe == 0) {
-        all_edges = malloc(total_edges * sizeof(edge_t));
-        if (!all_edges) {
-            shmem_free(all_edge_counts);
-            free(matrix);
-            return NULL;
-        }
-        
-        size_t offset = 0;
-        for (int pe = 0; pe < npes; pe++) {
-            size_t pe_edge_count = all_edge_counts[pe];
-            if (pe == 0) {
-                memcpy(&all_edges[offset], local_edges, pe_edge_count * sizeof(edge_t));
-            } else {
-                shmem_getmem(&all_edges[offset], local_edges, pe_edge_count * sizeof(edge_t), pe);
-            }
-            offset += pe_edge_count;
-        }
-        
-        // Sort edges
-        qsort(all_edges, total_edges, sizeof(edge_t), edge_compare);
-    }
-    
-    shmem_barrier_all();
-    
-    // Filter edges for this PE and count local edges
-    size_t my_edge_count = 0;
-    for (size_t i = 0; i < (mpe == 0 ? total_edges : 0); i++) {
-        if (mpe == 0 && row_on_this_pe(all_edges[i].row, mpe, npes)) {
-            my_edge_count++;
+        if (outbox_counts[i] > max_outbox) {
+            max_outbox = outbox_counts[i];
         }
     }
     
-    // Share edge counts per PE
-    size_t* pe_edge_counts = shmem_malloc(npes * sizeof(size_t));
+    // Use symmetric memory for sharing data
+    edge_t* shared_edges = max_outbox > 0 ? shmem_malloc(max_outbox * sizeof(edge_t)) : NULL;
+    size_t* shared_count = shmem_malloc(sizeof(size_t));
+    
+    if ((!shared_edges && max_outbox > 0) || !shared_count) {
+        // Cleanup
+        for (int i = 0; i < npes; i++) {
+            free(outboxes[i]);
+        }
+        free(outboxes);
+        free(outbox_counts);
+        free(outbox_capacities);
+        vec_free(&my_edges);
+        free(matrix);
+        if (shared_edges) shmem_free(shared_edges);
+        if (shared_count) shmem_free(shared_count);
+        return NULL;
+    }
+    
+    // Share data across PEs 
     for (int pe = 0; pe < npes; pe++) {
-        if (mpe == 0) {
-            size_t pe_count = 0;
-            for (size_t i = 0; i < total_edges; i++) {
-                if (row_on_this_pe(all_edges[i].row, pe, npes)) {
-                    pe_count++;
-                }
+        shmem_barrier_all();
+        
+        // Each PE publishes their data for mpe
+        if (pe == mpe) {
+            *shared_count = outbox_counts[mpe];
+            if (outbox_counts[mpe] > 0 && shared_edges) {
+                memcpy(shared_edges, outboxes[mpe], outbox_counts[mpe] * sizeof(edge_t));
             }
-            shmem_size_p(&pe_edge_counts[pe], pe_count, pe);
+        }
+        
+        shmem_barrier_all();
+        
+        // Get data from PE 'pe' destined for this PE
+        size_t remote_count;
+        shmem_size_get(&remote_count, shared_count, 1, pe);
+        
+        if (remote_count > 0 && shared_edges) {
+            edge_t* remote_edges = malloc(remote_count * sizeof(edge_t));
+            if (remote_edges) {
+                shmem_getmem(remote_edges, shared_edges, remote_count * sizeof(edge_t), pe);
+                
+                // Add to my_edges
+                for (size_t i = 0; i < remote_count; i++) {
+                    // Store as (row * matrix_size + col) for sorting
+                    size_t encoded = remote_edges[i].row * matrix_size + remote_edges[i].col;
+                    vec_push(&my_edges, encoded);
+                }
+                
+                free(remote_edges);
+            }
         }
     }
+    
+    if (shared_edges) shmem_free(shared_edges);
+    shmem_free(shared_count);
+    
     shmem_barrier_all();
     
-    matrix->local_nnz = pe_edge_counts[mpe];
+    // Cleanup outboxes
+    for (int i = 0; i < npes; i++) {
+        free(outboxes[i]);
+    }
+    free(outboxes);
+    free(outbox_counts);
+    free(outbox_capacities);
     
-    // Allocate symmetric memory for local data only
+    // Sort and deduplicate my edges
+    vec_sort_unique(&my_edges);
+    matrix->local_nnz = my_edges.length;
+    
+    // Allocate symmetric memory
     matrix->row_ptrs = shmem_calloc(matrix->local_rows + 1, sizeof(size_t));
     matrix->col_indices = shmem_malloc(matrix->local_nnz * sizeof(size_t));
     matrix->values = shmem_malloc(matrix->local_nnz * sizeof(unsigned char));
     
-    if (!matrix->row_ptrs || !matrix->col_indices || !matrix->values) {
+    if (!matrix->row_ptrs || (!matrix->col_indices && matrix->local_nnz > 0) || 
+        (!matrix->values && matrix->local_nnz > 0)) {
         if (matrix->row_ptrs) shmem_free(matrix->row_ptrs);
         if (matrix->col_indices) shmem_free(matrix->col_indices);
         if (matrix->values) shmem_free(matrix->values);
-        shmem_free(all_edge_counts);
-        shmem_free(pe_edge_counts);
+        vec_free(&my_edges);
         free(matrix);
         return NULL;
     }
     
-    // PE 0 distributes data to all PEs
-    if (mpe == 0) {
-        // Build data for each PE
-        for (int target_pe = 0; target_pe < npes; target_pe++) {
-            // Count local rows for target PE
-            size_t pe_local_rows = 0;
-            for (size_t row = 0; row < matrix_size; row++) {
-                if (row_to_pe(row, npes) == target_pe) {
-                    pe_local_rows++;
-                }
-            }
-            
-            if (pe_local_rows == 0) continue;
-            
-            // Build CRS for this PE
-            size_t* pe_row_ptrs = calloc(pe_local_rows + 1, sizeof(size_t));
-            size_t* pe_col_indices = malloc(pe_edge_counts[target_pe] * sizeof(size_t));
-            unsigned char* pe_values = malloc(pe_edge_counts[target_pe] * sizeof(unsigned char));
-            
-            size_t current_local_row = 0;
-            size_t edge_idx = 0;
-            pe_row_ptrs[0] = 0;
-            
-            for (size_t i = 0; i < total_edges; i++) {
-                if (row_on_this_pe(all_edges[i].row, target_pe, npes)) {
-                    size_t local_row = global_row_to_local_row(all_edges[i].row, npes);
-                    
-                    // Fill empty rows
-                    while (current_local_row < local_row) {
-                        current_local_row++;
-                        pe_row_ptrs[current_local_row] = edge_idx;
-                    }
-                    
-                    pe_col_indices[edge_idx] = all_edges[i].col;
-                    pe_values[edge_idx] = all_edges[i].value;
-                    edge_idx++;
-                }
-            }
-            
-            // Fill remaining row pointers
-            while (current_local_row < pe_local_rows) {
-                current_local_row++;
-                pe_row_ptrs[current_local_row] = edge_idx;
-            }
-            
-            // Send data to target PE
-            if (target_pe == 0) {
-                memcpy(matrix->row_ptrs, pe_row_ptrs, (pe_local_rows + 1) * sizeof(size_t));
-                memcpy(matrix->col_indices, pe_col_indices, edge_idx * sizeof(size_t));
-                memcpy(matrix->values, pe_values, edge_idx * sizeof(unsigned char));
-            } else {
-                shmem_putmem(matrix->row_ptrs, pe_row_ptrs, (pe_local_rows + 1) * sizeof(size_t), target_pe);
-                shmem_putmem(matrix->col_indices, pe_col_indices, edge_idx * sizeof(size_t), target_pe);
-                shmem_putmem(matrix->values, pe_values, edge_idx * sizeof(unsigned char), target_pe);
-            }
-            
-            free(pe_row_ptrs);
-            free(pe_col_indices);
-            free(pe_values);
+    // Build CRS format from sorted edges
+    size_t current_local_row = 0;
+    matrix->row_ptrs[0] = 0;
+    
+    for (size_t i = 0; i < my_edges.length; i++) {
+        size_t encoded = my_edges.data[i];
+        size_t row = encoded / matrix_size;
+        size_t col = encoded % matrix_size;
+        
+        size_t local_row = global_row_to_local_row(row, npes);
+        
+        // Fill empty rows
+        while (current_local_row < local_row) {
+            current_local_row++;
+            matrix->row_ptrs[current_local_row] = i;
         }
         
-        free(all_edges);
+        matrix->col_indices[i] = col;
+        matrix->values[i] = 1;
     }
     
+    // Fill remaining row pointers
+    while (current_local_row < matrix->local_rows) {
+        current_local_row++;
+        matrix->row_ptrs[current_local_row] = my_edges.length;
+    }
+    
+    vec_free(&my_edges);
     shmem_barrier_all();
-    shmem_free(all_edge_counts);
-    shmem_free(pe_edge_counts);
     
     return matrix;
 }

@@ -1,11 +1,23 @@
 [package]
 name = "bfs-graph-search"
+default-run = "bfs-graph-search"
 version = "0.0.1"
 authors = [ "Yash Kumar <tyushk+git@gmail.com>" ]
 edition = "2021"
 
 [profile.dev]
 opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[[bin]]
+name = "bfs-graph-search"
+path = "src/main.rs"
 
 [dependencies]
 openshmem-rs = { path = "../../" }
