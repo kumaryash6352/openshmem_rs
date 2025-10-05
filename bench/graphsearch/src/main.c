@@ -546,9 +546,11 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "[PE %2d]search #%4zu: %10zu -> %10zu...\n", mpe, i, searches[i].from, searches[i].to);
         distances[i] = bfs(matrix, searches[i].from, searches[i].to);
     }
-    
+
+    shmem_barrier_all();
     // Statistics (simplified - only PE 0's local results)
     if (mpe == 0 && search_count > 0) {
+        double elapsed = get_time() - start_time;
         size_t min_dist = SIZE_MAX;
         size_t max_dist = 0;
         double total_dist = 0;
@@ -563,7 +565,6 @@ int main(int argc, char* argv[]) {
             }
         }
         
-        double elapsed = get_time() - start_time;
         fprintf(stderr, "%zu searches in %.3fs\n", total_search_lines, elapsed);
         printf("%.3f\n", total_search_lines / elapsed);
     }

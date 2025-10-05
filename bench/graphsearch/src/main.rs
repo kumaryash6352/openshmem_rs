@@ -16,7 +16,6 @@ use std::{
 fn main() -> Result<(), Box<dyn Error>> {
     eprintln!("Hello, world!");
 
-    // Parse CLI arguments
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
         eprintln!("Usage: {} <searchlist> <edgelist>", args[0]);
@@ -40,7 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     eprintln!("[PE {:>2}] start parse edgelist", mype);
     let edges = input
-        .par_iter()
+        .iter()
         .skip(mype * elines_per_pe)
         .take(elines_per_pe)
         .filter_map(|s| parse_edge(&s))
@@ -53,7 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let mut max = shm.shbox(
         edges
-            .par_iter()
+            .iter()
             .map(|(r, c)| r.max(c))
             .max()
             .copied()
@@ -70,7 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         edges.len()
     );
     let edges = edges
-        .into_par_iter()
+        .into_iter()
         .map(|(r, c)| (r, c, 1u8))
         .collect::<Vec<_>>();
     let adj = CrsMatrix::from_coo(*max + 1, *max + 1, &edges, &ctx, &shm);
@@ -83,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect::<Result<Vec<String>, std::io::Error>>()?;
     let slines_per_pe = search_input.len().div_ceil(npes);
     let searches = search_input
-        .par_iter()
+        .iter()
         .skip(mype * slines_per_pe)
         .take(slines_per_pe)
         .filter_map(|s| parse_edge(&s))
@@ -98,6 +97,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         distances.push(bfs(from, to, &adj, &ctx, &shm));
     }
 
+    ctx.barrier_all();
+    
     if mype == 0 {
         eprintln!("max distance: {}", distances.iter().max().unwrap());
         eprintln!("min distance: {}", distances.iter().min().unwrap());
@@ -124,60 +125,69 @@ fn bfs(
     to: usize,
     adj: &CrsMatrix<'_, u8>,
     ctx: &ShmemCtx,
-    shm: &Shmallocator<'_>,
+    _shm: &Shmallocator<'_>,
 ) -> usize {
-    let mut conns = adj.cols_on_row(from).iter().copied().collect::<Vec<_>>();
-    let mut q2 = Vec::with_capacity(conns.len());
-    bfs_p(ctx, shm, &adj, to, &mut conns, &mut q2, &mut FxHashSet::default(), 1)
+    if from == to {
+        return 0;
+    }
+    
+    // prealloc
+    let mut q_targets = Vec::with_capacity(256);
+    let mut q_scratch = Vec::with_capacity(256);
+    let mut seen = FxHashSet::with_capacity_and_hasher(65536, Default::default());
+
+    // initial level
+    let neighbors = adj.cols_on_row(from);
+    q_targets.extend(neighbors.iter().copied());
+    sort_and_dedup(&mut q_targets);
+    
+    let mut layers = 1;
+    
+    while !q_targets.is_empty() && layers <= 20000 {
+        if q_targets.binary_search(&to).is_ok() {
+            return layers;
+        }
+        
+        q_scratch.clear();
+        for &node in &q_targets {
+            let node_neighbors = adj.cols_on_row(node);
+            for neighbor in node_neighbors {
+                if !seen.contains(&neighbor) {
+                    q_scratch.push(neighbor);
+                }
+            }
+        }
+        
+        for &node in &q_targets {
+            seen.insert(node);
+        }
+        
+        sort_and_dedup(&mut q_scratch);
+        
+        // anti infinite loop
+        if layers > 20000 || (q_scratch.len() == q_targets.len() && q_scratch == q_targets) {
+            eprintln!(
+                "pe {}: BFS infinite loop detected at layer {}",
+                ctx.my_pe().raw(),
+                layers
+            );
+            break;
+        }
+        
+        std::mem::swap(&mut q_targets, &mut q_scratch);
+        layers += 1;
+    }
+    
+    usize::MAX
 }
 
-fn bfs_p(
-    ctx: &ShmemCtx,
-    shm: &Shmallocator<'_>,
-    adj: &CrsMatrix<'_, u8>,
-    target: usize,
-    q_targets: &mut Vec<usize>,
-    q_scratch: &mut Vec<usize>,
-    seen: &mut FxHashSet<usize>,
-    layers: usize,
-) -> usize {
-    if q_targets.binary_search(&target).is_ok() {
-        layers
-    } else {
-        q_scratch.clear();
-        q_scratch.extend(q_targets.iter().map(|i| adj.cols_on_row(*i)).flatten());
-        q_scratch.par_sort_unstable();
-
-        // prepare new queue
-        let next_targets = q_targets
-            .as_slice() // rayon doesn't yet support custom allocs
-            .into_par_iter()
-            .map(|idx| adj.cols_on_row(*idx).to_vec())
-            .flatten()
-            .filter(|i| !seen.contains(i))
-            .collect::<Vec<_>>();
-        q_scratch.clear();
-        q_scratch.extend(next_targets);
-        q_scratch.par_sort_unstable();
-        q_scratch.dedup();
-        q_scratch.iter().for_each(|i| { seen.insert(*i); });
-        if layers > 20000 || q_scratch == q_targets {
-            eprintln!(
-                "pe {}: i think i'm in an infinite loop: {q_targets:?}",
-                ctx.my_pe()
-            );
-        }
-        bfs_p(
-            ctx,
-            shm,
-            adj,
-            target,
-            q_scratch,
-            q_targets,
-            seen,
-            layers + 1,
-        )
+fn sort_and_dedup(vec: &mut Vec<usize>) {
+    if vec.len() <= 1 {
+        return;
     }
+    
+    vec.sort_unstable();
+    vec.dedup();
 }
 
 fn parse_edge<'a>(line: &'a str) -> Option<(usize, usize)> {
