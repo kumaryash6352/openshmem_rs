@@ -87,15 +87,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         .take(slines_per_pe)
         .filter_map(|s| parse_edge(&s))
         .collect::<Vec<_>>();
-    let searches = Shvec::from_iter(&ctx, &shm, searches.into_iter());
-    let all_searches = searches.collect();
-    eprintln!("[PE {:>2}] parsed {} searchpairs", mype, all_searches.len());
+    eprintln!("[PE {:>2}] parsed {} searchpairs", mype, searches.len());
     
     // don't need the shvec overhead anymore
-    let local_searches = all_searches.iter().collect::<Vec<_>>();
-    let mut distances = Vec::with_capacity(local_searches.len());
+    let mut distances = Vec::with_capacity(searches.len());
     eprintln!("[PE {:>2}] starting searches!", mype);
-    for (from, to) in local_searches {
+    for (from, to) in searches {
         eprintln!("[PE {mype:>2}]search #{:>4}: {from:>10} -> {to:>10}...", distances.len());
         distances.push(bfs(*from, *to, &adj, &ctx, &shm));
     }
