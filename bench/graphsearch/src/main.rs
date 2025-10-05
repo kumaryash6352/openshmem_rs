@@ -90,11 +90,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let searches = Shvec::from_iter(&ctx, &shm, searches.into_iter());
     let all_searches = searches.collect();
     eprintln!("[PE {:>2}] parsed {} searchpairs", mype, all_searches.len());
-    let mut distances = Vec::with_capacity(all_searches.len());
+    
+    // don't need the shvec overhead anymore
+    let local_searches = all_searches.iter().collect::<Vec<_>>();
+    let mut distances = Vec::with_capacity(local_searches.len());
     eprintln!("[PE {:>2}] starting searches!", mype);
-    for (from, to) in searches.iter() {
+    for (from, to) in local_searches {
         eprintln!("[PE {mype:>2}]search #{:>4}: {from:>10} -> {to:>10}...", distances.len());
-        distances.push(bfs(from, to, &adj, &ctx, &shm));
+        distances.push(bfs(*from, *to, &adj, &ctx, &shm));
     }
 
     ctx.barrier_all();
@@ -131,10 +134,9 @@ fn bfs(
         return 0;
     }
     
-    // prealloc
     let mut q_targets = Vec::with_capacity(256);
     let mut q_scratch = Vec::with_capacity(256);
-    let mut seen = FxHashSet::with_capacity_and_hasher(65536, Default::default());
+    let mut seen = FxHashSet::with_capacity_and_hasher(65565, rustc_hash::FxBuildHasher::default());
 
     // initial level
     let neighbors = adj.cols_on_row(from);

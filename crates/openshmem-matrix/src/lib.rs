@@ -104,36 +104,69 @@ impl<'ctx, T: Shend + Send + Copy + std::fmt::Debug> CrsMatrix<'ctx, T> {
 
     pub fn cols_on_row(&self, row: usize) -> Box<[usize]> {
         let (idx, remote_pe) = self.global_row_to_pe_row(row);
-        let (start, end) = self.ctx.quiet((
-            self.row_ptrs.get_single_nbi(idx, remote_pe, self.ctx),
-            self.row_ptrs.get_single_nbi(idx + 1, remote_pe, self.ctx),
-        ));
-        if start == end {
-            Box::default()
+        
+        if remote_pe.raw() == self.mpe {
+            // local - avoid remote operations and allocations
+            let start = self.row_ptrs[idx];
+            let end = self.row_ptrs[idx + 1];
+            if start == end {
+                Box::default()
+            } else {
+                // use local span and convert
+                self.col_idxs.span(start..end).into()
+            }
         } else {
-            self.col_idxs.span_remote(start..end, remote_pe)
+            // remote - use remote operations
+            let (start, end) = self.ctx.quiet((
+                self.row_ptrs.get_single_nbi(idx, remote_pe, self.ctx),
+                self.row_ptrs.get_single_nbi(idx + 1, remote_pe, self.ctx),
+            ));
+            if start == end {
+                Box::default()
+            } else {
+                self.col_idxs.span_remote(start..end, remote_pe)
+            }
         }
     }
 
     pub fn nnz_on_row(&self, row: usize) -> usize {
         let (idx, remote_pe) = self.global_row_to_pe_row(row);
-        let (start, end) = self.ctx.quiet((
-            self.row_ptrs.get_single_nbi(idx, remote_pe, self.ctx),
-            self.row_ptrs.get_single_nbi(idx + 1, remote_pe, self.ctx),
-        ));
-        end - start
+        
+        if remote_pe.raw() == self.mpe {
+            // local - direct access to row pointers
+            self.row_ptrs[idx + 1] - self.row_ptrs[idx]
+        } else {
+            // remote - use remote operations
+            let (start, end) = self.ctx.quiet((
+                self.row_ptrs.get_single_nbi(idx, remote_pe, self.ctx),
+                self.row_ptrs.get_single_nbi(idx + 1, remote_pe, self.ctx),
+            ));
+            end - start
+        }
     }
 
     pub fn xs_on_row(&self, row: usize) -> Box<[T]> {
         let (idx, remote_pe) = self.global_row_to_pe_row(row);
-        let (start, end) = self.ctx.quiet((
-            self.row_ptrs.get_single_nbi(idx, remote_pe, self.ctx),
-            self.row_ptrs.get_single_nbi(idx + 1, remote_pe, self.ctx),
-        ));
-        if start == end {
-            Box::default()
+        
+        if remote_pe.raw() == self.mpe {
+            // local - avoid remote operations and allocations
+            let start = self.row_ptrs[idx];
+            let end = self.row_ptrs[idx + 1];
+            if start == end {
+                Box::default()
+            } else {
+                self.xs.span(start..end).into()
+            }
         } else {
-            self.xs.span_remote(start..end, remote_pe)
+            let (start, end) = self.ctx.quiet((
+                self.row_ptrs.get_single_nbi(idx, remote_pe, self.ctx),
+                self.row_ptrs.get_single_nbi(idx + 1, remote_pe, self.ctx),
+            ));
+            if start == end {
+                Box::default()
+            } else {
+                self.xs.span_remote(start..end, remote_pe)
+            }
         }
     }
 
@@ -264,13 +297,19 @@ impl<'ctx, T: Shend + Send + Copy + std::fmt::Debug> CrsMatrix<'ctx, T> {
         let rows_per_pe = rows.div_ceil(ctx.n_pes());
         let mut row_ptrs = shm.array_default(rows_per_pe + 1);
 
-        let mut current_row = row_ptrs[0];
+        let mut current_row = 0;
+        let total_elements = irows.len();
         for (k, row) in irows.into_iter().enumerate() {
-            let row = row / npes;
-            while current_row < row {
+            let local_row = row / npes;
+            while current_row < local_row {
                 current_row += 1;
                 row_ptrs[current_row] = k;
             }
+        }
+        // Fill remaining row pointers with the final count
+        while current_row < rows_per_pe {
+            current_row += 1;
+            row_ptrs[current_row] = total_elements;
         }
 
         Self {

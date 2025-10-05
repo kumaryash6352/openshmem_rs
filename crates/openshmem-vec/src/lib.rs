@@ -36,6 +36,12 @@ pub struct Shvec<'ctx, T: Shend> {
     mem_len: Shbox<'ctx, Atomic<usize>>,
     lck: Shbox<'ctx, [Shmlock<'ctx>]>,
     buf: Shbox<'ctx, [MaybeUninit<T>]>,
+    /// cached minimum length - only updated when we know the actual length has grown
+    /// 
+    /// avoids atomic fetches for bounds checks when we know the data is available
+    /// 
+    /// since shvec is grow-only, cached_min_len \leq mem_len
+    cached_min_len: std::sync::atomic::AtomicUsize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,6 +62,7 @@ impl<'ctx, T: Shend + Copy> Shvec<'ctx, T> {
             mem_len: shm.shbox(Atomic::new(0)),
             lck: shm.array_gen(|_| shm.lock(), ctx.n_pes()),
             buf: shm.array_gen(|_| MaybeUninit::uninit(), *cap),
+            cached_min_len: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -82,6 +89,7 @@ impl<'ctx, T: Shend + Copy> Shvec<'ctx, T> {
             lck: shm.array_gen(|_| shm.lock(), ctx.n_pes()),
             valid_len: shm.shbox(Atomic::new(buf.len())),
             mem_len: shm.shbox(Atomic::new(buf.len())),
+            cached_min_len: std::sync::atomic::AtomicUsize::new(buf.len()),
         };
         assert!(r.len() == buf.len());
         r
@@ -91,6 +99,7 @@ impl<'ctx, T: Shend + Copy> Shvec<'ctx, T> {
         let mpe = self.ctx.my_pe();
         let _guard = self.lck[mpe.raw()].lock();
         self.valid_len.atomic_set(0, mpe, self.ctx);
+        self.cached_min_len.store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn extend(&mut self, from: &[T]) -> Result<(), WouldRealloc> {
@@ -102,6 +111,8 @@ impl<'ctx, T: Shend + Copy> Shvec<'ctx, T> {
             self.mem_len.atomic_add(from.len(), self.ctx.my_pe(), self.ctx);
             self.buf[len..(len + from.len())].copy_from_slice(unsafe { transmute(from) });
             self.valid_len.atomic_add(from.len(), self.ctx.my_pe(), self.ctx);
+            let new_len = len + from.len();
+            self.cached_min_len.fetch_max(new_len, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         }
     }
@@ -145,18 +156,29 @@ impl<'ctx, T: Shend + Copy> Shvec<'ctx, T> {
     }
 
     pub fn span(&self, range: impl RangeBounds<usize>) -> &[T] {
-        let len = self.valid_len.atomic_fetch_local(self.ctx);
+        let cached_len = self.cached_min_len.load(std::sync::atomic::Ordering::Relaxed);
+        
         let end = match range.end_bound() {
             std::ops::Bound::Included(x) => *x + 1,
             std::ops::Bound::Excluded(x) => *x,
-            std::ops::Bound::Unbounded => len,
+            std::ops::Bound::Unbounded => usize::MAX, // Will be resolved below
         };
         let start = match range.start_bound() {
             std::ops::Bound::Included(x) => *x,
             std::ops::Bound::Excluded(x) => *x + 1,
             std::ops::Bound::Unbounded => 0,
         };
-        let end = end.min(len);
+        
+        // if the access is within cached bounds, avoid atomic fetch
+        let len = if end <= cached_len {
+            cached_len
+        } else {
+            let actual_len = self.valid_len.atomic_fetch_local(self.ctx);
+            self.cached_min_len.fetch_max(actual_len, std::sync::atomic::Ordering::Relaxed);
+            actual_len
+        };
+        
+        let end = if end == usize::MAX { len } else { end.min(len) };
 
         // SAFETY: we know start..end is initialized because len > end or we'd have panic'd
         unsafe { transmute(&self.buf[start..end]) }
@@ -316,6 +338,9 @@ impl<'ctx, T: Shend + Copy> Shvec<'ctx, T> {
             remote.put_single(&mut self.buf, remote_len, &MaybeUninit::new(value));
             self.valid_len.atomic_inc(pe, self.ctx);
             self.ctx.quiet(());
+            if pe == self.ctx.my_pe() {
+                self.cached_min_len.fetch_max(remote_len + 1, std::sync::atomic::Ordering::Relaxed);
+            }
             Ok(remote_len)
         }
     }
@@ -356,6 +381,7 @@ impl<'ctx, T: Shend + Copy> Shvec<'ctx, T> {
         self.buf[idx] = MaybeUninit::new(x);
         self.mem_len.atomic_inc(self.ctx.my_pe(), self.ctx);
         self.valid_len.atomic_inc(self.ctx.my_pe(), self.ctx);
+        self.cached_min_len.fetch_max(len + 1, std::sync::atomic::Ordering::Relaxed);
         unsafe {
             self.lck[self.ctx.my_pe().raw() as usize].unlock_raw();
         }
