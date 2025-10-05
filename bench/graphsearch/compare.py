@@ -8,7 +8,7 @@ from pathlib import Path
 runner = ["mpiexec.hydra", "-n", "2", "-bind-to", "hwthread"]
 cbin = "graphsearch"
 rsbin = "graphsearch-rs"
-graph_sizes = [32, 64, 128, 256, 512]  # N×N graph sizes to test
+graph_sizes = [pow(x, 3) for x in [4, 8, 16, 32, 64]]  # N×N graph sizes to test
 n_searches = 64  # number of search pairs per test
 
 def run_command(cmd):
