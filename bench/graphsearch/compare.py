@@ -15,7 +15,7 @@ def run_command(cmd):
     try:
         print(f"running: {' '.join(cmd)}")
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                              universal_newlines=True, check=True, timeout=300)
+                              universal_newlines=True, check=True)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
         print(f"command failed: {e}")
