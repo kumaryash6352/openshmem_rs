@@ -64,7 +64,7 @@ def main():
     
     # create temp directory for test files under working directory
     temp_path = Path("./bench/graphsearch/temp_data")
-    temp_path.mkdir(exist_ok=True)
+    temp_path.mkdir(exist_ok=True, parents=True)
     
     try:
         for graph_size in graph_sizes:
